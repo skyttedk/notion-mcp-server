@@ -9,17 +9,19 @@ WORKDIR /app
 # Copy package.json and package-lock.json
 COPY package*.json ./
 
-# Install dependencies
-RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts --omit-dev
+# Install dependencies. No cache mounts (Railway requires a special cache id
+# format for --mount=type=cache) and WITH dev deps (npm run build needs tsc,
+# which is a devDependency).
+RUN npm ci --ignore-scripts
 
 # Copy source code
 COPY . .
 
 # Build the package
-RUN --mount=type=cache,target=/root/.npm npm run build
+RUN npm run build
 
 # Install package globally
-RUN --mount=type=cache,target=/root/.npm npm link
+RUN npm link
 
 # Minimal image for runtime
 FROM node:20-slim
