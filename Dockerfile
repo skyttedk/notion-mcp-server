@@ -32,5 +32,5 @@ COPY --from=builder /usr/local/bin/notion-mcp-server /usr/local/bin/notion-mcp-s
 # Set default environment variables
 ENV OPENAPI_MCP_HEADERS="{}"
 
-# Set entrypoint
-ENTRYPOINT ["notion-mcp-server"]
+# CMD (not ENTRYPOINT) so Railway's startCommand can override it cleanly
+CMD ["notion-mcp-server"]
