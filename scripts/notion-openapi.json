@@ -298,6 +298,143 @@
     }
   ],
   "paths": {
+    "/v1/file_uploads": {
+      "post": {
+        "summary": "Create a file upload",
+        "description": "Step 1 of attaching a file to Notion. Reserves an upload and returns an `id`. Then call `API-send-a-file-upload` with that id to transfer the bytes, and finally reference it from a block or property as `{\"type\": \"file_upload\", \"file_upload\": {\"id\": \"<id>\"}}`. Single-part uploads are limited to 20MB. An upload must be attached within one hour or it expires.",
+        "operationId": "create-a-file-upload",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/notionVersion"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "filename": {
+                    "type": "string",
+                    "description": "Name of the file including its extension, e.g. 'screenshot.png'. Determines the name shown in Notion."
+                  },
+                  "content_type": {
+                    "type": "string",
+                    "description": "MIME type, e.g. 'image/png'. Inferred from the filename when omitted."
+                  },
+                  "mode": {
+                    "type": "string",
+                    "description": "'single_part' (default, up to 20MB) or 'multi_part' for larger files.",
+                    "default": "single_part"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/file_uploads/{file_upload_id}/send": {
+      "post": {
+        "summary": "Send a file upload",
+        "description": "Step 2: transfer the bytes for an upload created by `API-create-a-file-upload`. Because this server runs remotely and shares no filesystem with the caller, the `file` parameter accepts a data: URI, a bare base64 string, or an http(s) URL the server can fetch — a local path only works when running over stdio.",
+        "operationId": "send-a-file-upload",
+        "parameters": [
+          {
+            "name": "file_upload_id",
+            "in": "path",
+            "description": "The `id` returned by API-create-a-file-upload.",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "$ref": "#/components/parameters/notionVersion"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "File contents as a data: URI, a bare base64 string, or an http(s) URL to fetch."
+                  },
+                  "filename": {
+                    "type": "string",
+                    "description": "Optional name for the multipart part; defaults to the create step's filename."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/file_uploads/{file_upload_id}": {
+      "get": {
+        "summary": "Retrieve a file upload",
+        "description": "Check the status of a file upload ('pending', 'uploaded', 'expired', 'failed').",
+        "operationId": "retrieve-a-file-upload",
+        "parameters": [
+          {
+            "name": "file_upload_id",
+            "in": "path",
+            "description": "Identifier for a file upload.",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "$ref": "#/components/parameters/notionVersion"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/users/{user_id}": {
       "get": {
         "summary": "Retrieve a user",

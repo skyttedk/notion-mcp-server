@@ -113,30 +113,60 @@ export class HttpClient {
       if (!filePath) {
         throw new Error(`File path must be provided for parameter: ${param}`)
       }
+      const addFile = async (name: string, source: string) => {
+        // Upstream only accepted a local filesystem path. That is meaningless
+        // for a remotely hosted server, which shares no disk with the caller,
+        // so also accept the bytes inline (data: URI or bare base64) or a URL
+        // the server can fetch. The path branch is kept for stdio use.
+        try {
+          const filename = typeof params.filename === 'string' ? params.filename : name
+
+          if (/^data:/i.test(source)) {
+            const b64 = source.slice(source.indexOf(',') + 1)
+            formData.append(name, Buffer.from(b64, 'base64'), { filename })
+            return
+          }
+
+          if (/^https?:\/\//i.test(source)) {
+            const res = await fetch(source)
+            if (!res.ok) {
+              throw new Error(`GET ${source} returned ${res.status}`)
+            }
+            const buf = Buffer.from(await res.arrayBuffer())
+            formData.append(name, buf, { filename })
+            return
+          }
+
+          // Bare base64: long, and containing none of the characters a path or
+          // filename would have. A real path can't match this at 100+ chars.
+          if (/^[A-Za-z0-9+/\s]{100,}={0,2}$/.test(source)) {
+            formData.append(name, Buffer.from(source, 'base64'), { filename })
+            return
+          }
+
+          formData.append(name, fs.createReadStream(source))
+        } catch (error) {
+          // Keep upstream's message (it names the source, which is what you
+          // need to debug) but truncate: `source` may be megabytes of base64.
+          const shown = source.length > 80 ? `${source.slice(0, 80)}...` : source
+          throw new Error(`Failed to read file at ${shown}: ${error}`)
+        }
+      }
+
       switch (typeof filePath) {
         case 'string':
-          addFile(param, filePath)
+          await addFile(param, filePath)
           break
         case 'object':
-          if(Array.isArray(filePath)) {
-            let fileCount = 0
-            for(const file of filePath) {
-              addFile(param, file)
-              fileCount++
+          if (Array.isArray(filePath)) {
+            for (const file of filePath) {
+              await addFile(param, file)
             }
             break
           }
           //deliberate fallthrough
         default:
           throw new Error(`Unsupported file type: ${typeof filePath}`)
-      }
-      function addFile(name: string, filePath: string) {
-          try {
-            const fileStream = fs.createReadStream(filePath)
-            formData.append(name, fileStream)
-        } catch (error) {
-          throw new Error(`Failed to read file at ${filePath}: ${error}`)
-        }
       }
     }
 

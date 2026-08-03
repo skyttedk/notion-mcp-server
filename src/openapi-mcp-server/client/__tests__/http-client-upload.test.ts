@@ -126,6 +126,69 @@ describe('HttpClient File Upload', () => {
     await expect(client.executeOperation(operation, params)).rejects.toThrow('Failed to read file at /nonexistent/file.txt')
   })
 
+  // Fork addition: a remotely hosted server shares no filesystem with the
+  // caller, so file params also accept inline bytes or a fetchable URL.
+  describe('remote file sources', () => {
+    const BYTES = Buffer.from('fake screenshot bytes')
+    const B64 = BYTES.toString('base64')
+
+    const runUpload = async (file: string, extra: Record<string, any> = {}) => {
+      vi.spyOn(FormData.prototype, 'append').mockImplementation(() => {})
+      vi.spyOn(FormData.prototype, 'getHeaders').mockReturnValue({})
+      const operation = mockOpenApiSpec.paths['/upload']!.post as OpenAPIV3.OperationObject & {
+        method: string
+        path: string
+      }
+      mockApiInstance.uploadFile.mockResolvedValue({ data: { success: true }, status: 200, headers: {} })
+      await client.executeOperation(operation, { file, ...extra })
+      return vi.mocked(FormData.prototype.append).mock.calls.find((c) => c[0] === 'file')
+    }
+
+    it('decodes a data: URI to bytes without touching the filesystem', async () => {
+      const call = await runUpload(`data:image/png;base64,${B64}`, { filename: 'shot.png' })
+      expect(call?.[1]).toBeInstanceOf(Buffer)
+      expect((call?.[1] as Buffer).equals(BYTES)).toBe(true)
+      expect(call?.[2]).toEqual({ filename: 'shot.png' })
+      expect(fs.createReadStream).not.toHaveBeenCalled()
+    })
+
+    it('decodes a bare base64 string', async () => {
+      // Padded out past the 100-char threshold that distinguishes base64 from a path.
+      const long = Buffer.from('x'.repeat(200)).toString('base64')
+      const call = await runUpload(long)
+      expect((call?.[1] as Buffer).equals(Buffer.from('x'.repeat(200)))).toBe(true)
+      expect(fs.createReadStream).not.toHaveBeenCalled()
+    })
+
+    it('fetches an http(s) URL', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => BYTES.buffer.slice(BYTES.byteOffset, BYTES.byteOffset + BYTES.byteLength),
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const call = await runUpload('https://example.com/shot.png', { filename: 'shot.png' })
+      expect(fetchMock).toHaveBeenCalledWith('https://example.com/shot.png')
+      expect((call?.[1] as Buffer).equals(BYTES)).toBe(true)
+      expect(fs.createReadStream).not.toHaveBeenCalled()
+      vi.unstubAllGlobals()
+    })
+
+    it('surfaces a failed fetch instead of uploading nothing', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404 }))
+      await expect(runUpload('https://example.com/missing.png')).rejects.toThrow('returned 404')
+      vi.unstubAllGlobals()
+    })
+
+    it('still reads a local path, so stdio use is unchanged', async () => {
+      const stream = { pipe: vi.fn() }
+      vi.mocked(fs.createReadStream).mockReturnValue(stream as any)
+      const call = await runUpload('/path/to/test.txt')
+      expect(fs.createReadStream).toHaveBeenCalledWith('/path/to/test.txt')
+      expect(call?.[1]).toBe(stream)
+    })
+  })
+
   it('should handle multiple file uploads', async () => {
     const mockFormData = new FormData()
     const mockFileStream1 = { pipe: vi.fn() }

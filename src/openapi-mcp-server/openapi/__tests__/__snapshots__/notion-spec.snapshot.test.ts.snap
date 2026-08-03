@@ -4,6 +4,7 @@ exports[`Notion OpenAPI spec -> MCP tools (snapshot) > generates a stable set of
 [
   "create-a-comment",
   "create-a-data-source",
+  "create-a-file-upload",
   "delete-a-block",
   "get-block-children",
   "get-self",
@@ -20,9 +21,11 @@ exports[`Notion OpenAPI spec -> MCP tools (snapshot) > generates a stable set of
   "retrieve-a-comment",
   "retrieve-a-data-source",
   "retrieve-a-database",
+  "retrieve-a-file-upload",
   "retrieve-a-page",
   "retrieve-a-page-property",
   "retrieve-page-markdown",
+  "send-a-file-upload",
   "update-a-block",
   "update-a-data-source",
   "update-page-markdown",
@@ -61,6 +64,17 @@ Error Responses:
       "parent",
       "properties",
     ],
+  },
+  {
+    "description": "Notion | Create a file upload",
+    "httpMethod": "post",
+    "name": "create-a-file-upload",
+    "properties": [
+      "content_type",
+      "filename",
+      "mode",
+    ],
+    "required": [],
   },
   {
     "description": "Notion | Delete a block
@@ -296,6 +310,17 @@ Error Responses:
     ],
   },
   {
+    "description": "Notion | Retrieve a file upload",
+    "httpMethod": "get",
+    "name": "retrieve-a-file-upload",
+    "properties": [
+      "file_upload_id",
+    ],
+    "required": [
+      "file_upload_id",
+    ],
+  },
+  {
     "description": "Notion | Retrieve a page
 Error Responses:
 400: Bad request",
@@ -341,6 +366,20 @@ Error Responses:
     ],
     "required": [
       "page_id",
+    ],
+  },
+  {
+    "description": "Notion | Send a file upload",
+    "httpMethod": "post",
+    "name": "send-a-file-upload",
+    "properties": [
+      "file",
+      "file_upload_id",
+      "filename",
+    ],
+    "required": [
+      "file",
+      "file_upload_id",
     ],
   },
   {
