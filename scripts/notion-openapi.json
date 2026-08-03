@@ -250,6 +250,128 @@
         },
         "additionalProperties": false
       },
+      "imageBlockRequest": {
+        "description": "An image block. Use `external` for a publicly reachable URL, or `file_upload` for bytes uploaded via API-create-a-file-upload + API-send-a-file-upload.",
+        "type": "object",
+        "properties": {
+          "image": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "enum": [
+                  "external",
+                  "file_upload"
+                ],
+                "type": "string"
+              },
+              "external": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "description": "Publicly reachable image URL. Notion fetches it, so it must not require authentication."
+                  }
+                },
+                "required": [
+                  "url"
+                ],
+                "additionalProperties": false
+              },
+              "file_upload": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "The `id` from API-create-a-file-upload, after the bytes were sent with API-send-a-file-upload."
+                  }
+                },
+                "required": [
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              "caption": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/richTextRequest"
+                },
+                "maxItems": 100
+              }
+            },
+            "additionalProperties": false
+          },
+          "type": {
+            "enum": [
+              "image"
+            ],
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "fileBlockRequest": {
+        "description": "A file attachment block (PDF, zip, ...). Same two sources as an image block.",
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "enum": [
+                  "external",
+                  "file_upload"
+                ],
+                "type": "string"
+              },
+              "external": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "description": "Publicly reachable file URL."
+                  }
+                },
+                "required": [
+                  "url"
+                ],
+                "additionalProperties": false
+              },
+              "file_upload": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "The `id` from API-create-a-file-upload, after the bytes were sent with API-send-a-file-upload."
+                  }
+                },
+                "required": [
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              "name": {
+                "type": "string",
+                "description": "Display name for the attachment."
+              },
+              "caption": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/richTextRequest"
+                },
+                "maxItems": 100
+              }
+            },
+            "additionalProperties": false
+          },
+          "type": {
+            "enum": [
+              "file"
+            ],
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "blockObjectRequest": {
         "anyOf": [
           {
@@ -257,6 +379,12 @@
           },
           {
             "$ref": "#/components/schemas/bulletedListItemBlockRequest"
+          },
+          {
+            "$ref": "#/components/schemas/imageBlockRequest"
+          },
+          {
+            "$ref": "#/components/schemas/fileBlockRequest"
           }
         ]
       }
