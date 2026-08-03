@@ -40,7 +40,12 @@ export async function startServer(args: string[] = process.argv) {
   } else if (transport === 'http') {
     // Use Streamable HTTP transport
     const app = express()
-    app.use(express.json())
+    // express.json()'s default body limit is 100 KB, which silently capped file
+    // uploads: a tool call carrying more than ~75 KB of file bytes (base64 adds
+    // 4/3 overhead plus the JSON envelope) was rejected by the transport with a
+    // 413 before it ever reached the upload code. Notion's single-part upload
+    // cap is 20 MB, so allow 20 MB * 4/3 ≈ 27 MB of JSON with headroom.
+    app.use(express.json({ limit: '30mb' }))
 
     // Generate or use provided auth token (from CLI arg or env var) only if auth is enabled
     let authToken: string | undefined
