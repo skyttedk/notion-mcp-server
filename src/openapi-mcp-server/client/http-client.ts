@@ -101,11 +101,22 @@ export class HttpClient {
     return headers
   }
 
-  private async prepareFileUpload(operation: OpenAPIV3.OperationObject, params: Record<string, any>): Promise<FormData | null> {
+  private async prepareFileUpload(
+    operation: OpenAPIV3.OperationObject,
+    params: Record<string, any>,
+  ): Promise<{ formData: FormData; uploadedBytes: number | null } | null> {
     const fileParams = isFileUploadParameter(operation)
     if (fileParams.length === 0) return null
 
     const formData = new FormData()
+
+    // Byte count of the file payload(s) we actually append, used by
+    // executeOperation to detect a truncated store. Only the buffer-producing
+    // branches below (data: URI, bare base64, fetched URL — the remote sources
+    // where truncation was seen) are measurable; the local-path stream branch
+    // sets this to null, disabling the guard for stdio use.
+    let uploadedBytes = 0
+    let measurable = true
 
     // Handle file uploads
     for (const param of fileParams) {
@@ -123,7 +134,9 @@ export class HttpClient {
 
           if (/^data:/i.test(source)) {
             const b64 = source.slice(source.indexOf(',') + 1)
-            formData.append(name, Buffer.from(b64, 'base64'), { filename })
+            const buf = Buffer.from(b64, 'base64')
+            uploadedBytes += buf.length
+            formData.append(name, buf, { filename })
             return
           }
 
@@ -133,6 +146,7 @@ export class HttpClient {
               throw new Error(`GET ${source} returned ${res.status}`)
             }
             const buf = Buffer.from(await res.arrayBuffer())
+            uploadedBytes += buf.length
             formData.append(name, buf, { filename })
             return
           }
@@ -140,10 +154,15 @@ export class HttpClient {
           // Bare base64: long, and containing none of the characters a path or
           // filename would have. A real path can't match this at 100+ chars.
           if (/^[A-Za-z0-9+/\s]{100,}={0,2}$/.test(source)) {
-            formData.append(name, Buffer.from(source, 'base64'), { filename })
+            const buf = Buffer.from(source, 'base64')
+            uploadedBytes += buf.length
+            formData.append(name, buf, { filename })
             return
           }
 
+          // Local filesystem path (stdio only): size is not tracked here, so the
+          // truncation guard is disabled for this file.
+          measurable = false
           formData.append(name, fs.createReadStream(source))
         } catch (error) {
           // Keep upstream's message (it names the source, which is what you
@@ -177,7 +196,7 @@ export class HttpClient {
       }
     }
 
-    return formData
+    return { formData, uploadedBytes: measurable ? uploadedBytes : null }
   }
 
   /**
@@ -194,7 +213,8 @@ export class HttpClient {
     }
 
     // Handle file uploads if present
-    const formData = await this.prepareFileUpload(operation, params)
+    const upload = await this.prepareFileUpload(operation, params)
+    const formData = upload?.formData ?? null
 
     // Separate parameters based on their location
     const urlParameters: Record<string, any> = {}
@@ -252,6 +272,26 @@ export class HttpClient {
       Object.entries(response.headers).forEach(([key, value]) => {
         if (value) responseHeaders.append(key, value.toString())
       })
+
+      // Fork guard (file-upload patch): Notion accepts a truncated single-part
+      // upload, stores only the fragment, and still returns a normal success
+      // object — so a short store is silent corruption. When we know how many
+      // bytes we sent and Notion reports a different content_length, fail loud
+      // instead of returning a corrupt attachment as success.
+      if (upload && upload.uploadedBytes !== null) {
+        const stored = (response.data as any)?.content_length
+        if (stored !== undefined && stored !== null) {
+          const storedBytes = Number(stored)
+          if (!Number.isNaN(storedBytes) && storedBytes !== upload.uploadedBytes) {
+            throw new HttpClientError(
+              `File upload truncated: sent ${upload.uploadedBytes} bytes but Notion stored ${storedBytes}`,
+              response.status,
+              response.data,
+              responseHeaders,
+            )
+          }
+        }
+      }
 
       return {
         data: response.data,

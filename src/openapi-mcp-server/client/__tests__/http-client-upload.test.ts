@@ -189,6 +189,40 @@ describe('HttpClient File Upload', () => {
     })
   })
 
+  // Fork guard: Notion accepts a truncated single-part upload, stores the
+  // fragment, and still returns success — so a short store must fail loud.
+  describe('truncation guard', () => {
+    const BYTES = Buffer.from('fake screenshot bytes') // 21 bytes
+    const DATA_URI = `data:image/png;base64,${BYTES.toString('base64')}`
+
+    const runUploadWithResponse = async (data: any) => {
+      vi.spyOn(FormData.prototype, 'append').mockImplementation(() => {})
+      vi.spyOn(FormData.prototype, 'getHeaders').mockReturnValue({})
+      const operation = mockOpenApiSpec.paths['/upload']!.post as OpenAPIV3.OperationObject & {
+        method: string
+        path: string
+      }
+      mockApiInstance.uploadFile.mockResolvedValue({ data, status: 200, headers: {} })
+      return client.executeOperation(operation, { file: DATA_URI, filename: 'shot.png' })
+    }
+
+    it('throws when Notion stored fewer bytes than were sent', async () => {
+      await expect(runUploadWithResponse({ content_length: 4, status: 'uploaded' })).rejects.toThrow(
+        'File upload truncated: sent 21 bytes but Notion stored 4',
+      )
+    })
+
+    it('succeeds when the stored size matches the sent size', async () => {
+      await expect(runUploadWithResponse({ content_length: 21, status: 'uploaded' })).resolves.toMatchObject({
+        status: 200,
+      })
+    })
+
+    it('does not guard when the response carries no content_length', async () => {
+      await expect(runUploadWithResponse({ success: true })).resolves.toMatchObject({ status: 200 })
+    })
+  })
+
   it('should handle multiple file uploads', async () => {
     const mockFormData = new FormData()
     const mockFileStream1 = { pipe: vi.fn() }
