@@ -153,11 +153,33 @@ describe('HttpClient File Upload', () => {
     })
 
     it('decodes a bare base64 string', async () => {
-      // Padded out past the 100-char threshold that distinguishes base64 from a path.
       const long = Buffer.from('x'.repeat(200)).toString('base64')
       const call = await runUpload(long)
       expect((call?.[1] as Buffer).equals(Buffer.from('x'.repeat(200)))).toBe(true)
       expect(fs.createReadStream).not.toHaveBeenCalled()
+    })
+
+    // Regression: base64 used to be recognised only at 100+ characters, so a
+    // tiny file's base64 was taken for a path and failed with file-not-found.
+    it('decodes a tiny bare base64 string, far below the old 100-char threshold', async () => {
+      const tiny = Buffer.from('a short note')
+      const call = await runUpload(tiny.toString('base64'))
+      expect(call?.[1]).toBeInstanceOf(Buffer)
+      expect((call?.[1] as Buffer).equals(tiny)).toBe(true)
+      expect(fs.createReadStream).not.toHaveBeenCalled()
+    })
+
+    // Length is no longer the signal, so an existing file must still win —
+    // otherwise a stdio path made only of base64 characters would be decoded.
+    it('prefers a local file that actually exists over reading it as base64', async () => {
+      // Once: the stat mock must not leak into later tests, where the same
+      // shape of string is meant to be read as base64.
+      vi.mocked(fs.statSync).mockReturnValueOnce({ isFile: () => true } as any)
+      const stream = { pipe: vi.fn() }
+      vi.mocked(fs.createReadStream).mockReturnValue(stream as any)
+      const call = await runUpload('/data/report')
+      expect(fs.createReadStream).toHaveBeenCalledWith('/data/report')
+      expect(call?.[1]).toBe(stream)
     })
 
     it('fetches an http(s) URL', async () => {
@@ -195,7 +217,6 @@ describe('HttpClient File Upload', () => {
   // every non-image type. The send op therefore looks the upload up and
   // reuses its recorded filename and content_type.
   describe('send-a-file-upload content type', () => {
-    // Long enough that the bare-base64 form clears the 100-char threshold.
     const TEXT = Buffer.from('# markdown\n\nsome notes\n'.repeat(10))
     const B64 = TEXT.toString('base64')
 

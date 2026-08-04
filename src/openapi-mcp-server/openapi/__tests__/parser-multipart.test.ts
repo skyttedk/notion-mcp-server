@@ -1,6 +1,6 @@
 import { OpenAPIV3 } from 'openapi-types'
 import { describe, it, expect } from 'vitest'
-import { OpenAPIToMCPConverter } from '../parser'
+import { FILE_PARAM_DESCRIPTION, OpenAPIToMCPConverter } from '../parser'
 
 describe('OpenAPI Multipart Form Parser', () => {
   it('converts single file upload endpoint to tool', () => {
@@ -70,7 +70,7 @@ describe('OpenAPI Multipart Form Parser', () => {
       photo: {
         type: 'string',
         format: 'uri-reference',
-        description: expect.stringContaining('The photo to upload (absolute paths to local files)'),
+        description: expect.stringContaining(`The photo to upload (${FILE_PARAM_DESCRIPTION})`),
       },
       caption: {
         type: 'string',
@@ -157,7 +157,7 @@ describe('OpenAPI Multipart Form Parser', () => {
         type: 'array',
         items: {
           anyOf: [
-            { type: 'string', format: 'uri-reference', description: 'absolute paths to local files' },
+            { type: 'string', format: 'uri-reference', description: FILE_PARAM_DESCRIPTION },
             { type: 'string' },
             { type: 'object', additionalProperties: true },
           ],
@@ -271,13 +271,13 @@ describe('OpenAPI Multipart Form Parser', () => {
       avatar: {
         type: 'string',
         format: 'uri-reference',
-        description: expect.stringContaining('Profile picture (absolute paths to local files)'),
+        description: expect.stringContaining(`Profile picture (${FILE_PARAM_DESCRIPTION})`),
       },
       gallery: {
         type: 'array',
         items: {
           anyOf: [
-            { type: 'string', format: 'uri-reference', description: 'absolute paths to local files' },
+            { type: 'string', format: 'uri-reference', description: FILE_PARAM_DESCRIPTION },
             { type: 'string' },
             { type: 'object', additionalProperties: true },
           ],
@@ -417,13 +417,13 @@ describe('OpenAPI Multipart Form Parser', () => {
       certificate: {
         type: 'string',
         format: 'uri-reference',
-        description: expect.stringContaining('Optional pet certificate (absolute paths to local files)'),
+        description: expect.stringContaining(`Optional pet certificate (${FILE_PARAM_DESCRIPTION})`),
       },
       vaccinations: {
         type: 'array',
         items: {
           anyOf: [
-            { type: 'string', format: 'uri-reference', description: 'absolute paths to local files' },
+            { type: 'string', format: 'uri-reference', description: FILE_PARAM_DESCRIPTION },
             { type: 'string' },
             { type: 'object', additionalProperties: true },
           ],
@@ -522,7 +522,7 @@ describe('OpenAPI Multipart Form Parser', () => {
     expect(attachmentsSchema.type).toBe('array')
     expect(attachmentsSchema.items.type).toBe('object')
     expect(attachmentsSchema.items.properties.file.format).toBe('uri-reference')
-    expect(attachmentsSchema.items.properties.file.description).toBe('absolute paths to local files')
+    expect(attachmentsSchema.items.properties.file.description).toBe(FILE_PARAM_DESCRIPTION)
     expect(attachmentsSchema.items.required).toContain('file')
     expect(attachmentsSchema.items.required).toContain('type')
   })
@@ -617,7 +617,7 @@ describe('OpenAPI Multipart Form Parser', () => {
     const photoOption = contentSchema.oneOf[0]
     expect(photoOption.type).toBe('object')
     expect(photoOption.properties.photo.format).toBe('uri-reference')
-    expect(photoOption.properties.photo.description).toBe('absolute paths to local files')
+    expect(photoOption.properties.photo.description).toBe(FILE_PARAM_DESCRIPTION)
     expect(photoOption.required).toContain('photo')
     expect(photoOption.required).toContain('isProfile')
 
@@ -625,7 +625,7 @@ describe('OpenAPI Multipart Form Parser', () => {
     const documentOption = contentSchema.oneOf[1]
     expect(documentOption.type).toBe('object')
     expect(documentOption.properties.document.format).toBe('uri-reference')
-    expect(documentOption.properties.document.description).toBe('absolute paths to local files')
+    expect(documentOption.properties.document.description).toBe(FILE_PARAM_DESCRIPTION)
     expect(documentOption.required).toContain('document')
     expect(documentOption.required).toContain('category')
   })
