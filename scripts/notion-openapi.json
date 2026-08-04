@@ -444,7 +444,7 @@
                 "properties": {
                   "filename": {
                     "type": "string",
-                    "description": "Name of the file including its extension, e.g. 'screenshot.png'. Determines the name shown in Notion."
+                    "description": "Name of the file including its extension, e.g. 'screenshot.png'. Determines the name shown in Notion. Required when mode is 'external_url'."
                   },
                   "content_type": {
                     "type": "string",
@@ -452,8 +452,17 @@
                   },
                   "mode": {
                     "type": "string",
-                    "description": "'single_part' (default, up to 20MB) or 'multi_part' for larger files.",
+                    "enum": [
+                      "single_part",
+                      "multi_part",
+                      "external_url"
+                    ],
+                    "description": "'single_part' (default, up to 20MB), 'multi_part' for larger files, or 'external_url' to have Notion import a publicly reachable file itself.",
                     "default": "single_part"
+                  },
+                  "external_url": {
+                    "type": "string",
+                    "description": "Only with mode 'external_url'. HTTPS URL of a publicly accessible file for Notion to import. The import is asynchronous: the upload starts as 'pending', so poll API-retrieve-a-file-upload until it reports 'uploaded' before attaching it."
                   }
                 }
               }
@@ -1506,10 +1515,14 @@
                   },
                   "children": {
                     "type": "array",
-                    "description": "The content to be rendered on the new page, represented as an array of [block objects](https://developers.notion.com/reference/block).",
+                    "description": "The content to be rendered on the new page, represented as an array of [block objects](https://developers.notion.com/reference/block). Cannot be combined with `markdown`.",
                     "items": {
                       "type": "string"
                     }
+                  },
+                  "markdown": {
+                    "type": "string",
+                    "description": "The whole page body as Notion-flavoured Markdown, written while the page is created — no follow-up append call. Mutually exclusive with `children`."
                   },
                   "icon": {
                     "type": "string",
@@ -1789,22 +1802,43 @@
               "schema": {
                 "type": "object",
                 "required": [
-                  "parent",
                   "rich_text"
                 ],
                 "properties": {
                   "parent": {
-                    "type": "object",
-                    "description": "The page that contains the comment",
-                    "required": [
-                      "page_id"
-                    ],
-                    "properties": {
-                      "page_id": {
-                        "type": "string",
-                        "description": "the page ID"
+                    "description": "What the comment is attached to: a page or a single block. Omit when replying into an existing thread with `discussion_id`.",
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "description": "Comment on a page.",
+                        "required": [
+                          "page_id"
+                        ],
+                        "properties": {
+                          "page_id": {
+                            "type": "string",
+                            "description": "the page ID"
+                          }
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "description": "Comment anchored to one block, e.g. a paragraph, heading or to-do item.",
+                        "required": [
+                          "block_id"
+                        ],
+                        "properties": {
+                          "block_id": {
+                            "type": "string",
+                            "description": "the block ID the comment is attached to"
+                          }
+                        }
                       }
-                    }
+                    ]
+                  },
+                  "discussion_id": {
+                    "type": "string",
+                    "description": "Reply into an existing discussion thread instead of starting a new one. Take it from the `discussion_id` of a comment returned by API-retrieve-a-comment. Cannot be combined with `parent`."
                   },
                   "rich_text": {
                     "type": "array",
