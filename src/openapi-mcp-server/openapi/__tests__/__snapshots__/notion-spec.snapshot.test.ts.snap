@@ -41,6 +41,7 @@ Error Responses:
     "httpMethod": "post",
     "name": "create-a-comment",
     "properties": [
+      "attachments",
       "parent",
       "rich_text",
     ],

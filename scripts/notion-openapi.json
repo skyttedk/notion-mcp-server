@@ -1828,6 +1828,31 @@
                         }
                       }
                     }
+                  },
+                  "attachments": {
+                    "type": "array",
+                    "description": "Files to attach to the comment, e.g. a screenshot. Upload the bytes first with API-create-a-file-upload + API-send-a-file-upload, then reference the upload id here. Maximum 3.",
+                    "maxItems": 3,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "file_upload_id"
+                      ],
+                      "properties": {
+                        "file_upload_id": {
+                          "type": "string",
+                          "description": "The `id` from API-create-a-file-upload, after the bytes were sent with API-send-a-file-upload."
+                        },
+                        "type": {
+                          "enum": [
+                            "file_upload"
+                          ],
+                          "type": "string",
+                          "description": "Always `file_upload`; may be omitted."
+                        }
+                      },
+                      "additionalProperties": false
+                    }
                   }
                 }
               }
