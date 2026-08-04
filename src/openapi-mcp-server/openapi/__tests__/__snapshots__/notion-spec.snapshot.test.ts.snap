@@ -42,11 +42,11 @@ Error Responses:
     "name": "create-a-comment",
     "properties": [
       "attachments",
+      "discussion_id",
       "parent",
       "rich_text",
     ],
     "required": [
-      "parent",
       "rich_text",
     ],
   },
@@ -72,6 +72,7 @@ Error Responses:
     "name": "create-a-file-upload",
     "properties": [
       "content_type",
+      "external_url",
       "filename",
       "mode",
     ],
@@ -213,6 +214,7 @@ Error Responses:
       "children",
       "cover",
       "icon",
+      "markdown",
       "parent",
       "properties",
     ],
