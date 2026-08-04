@@ -110,6 +110,34 @@ export class HttpClient {
 
     const formData = new FormData()
 
+    // Fork fix (content-type mismatch): Notion validates the multipart part's
+    // Content-Type against the content_type declared at the create step, but
+    // form-data can only guess the type from the filename we pass — and when
+    // the caller omits one the fallback was the param name ('file'), which has
+    // no extension and becomes application/octet-stream, so the send is
+    // rejected. For the send endpoint, look the upload up and reuse the exact
+    // filename and content_type recorded at the create step, as the tool docs
+    // promise.
+    let declared: { filename?: string; contentType?: string } | undefined
+    if (operation.operationId === 'send-a-file-upload' && typeof params.file_upload_id === 'string') {
+      try {
+        const api = await this.api
+        const retrieve = (api as any)['retrieve-a-file-upload']
+        if (retrieve) {
+          const res = await retrieve({ file_upload_id: params.file_upload_id }, undefined, {
+            headers: this.buildDefaultHeaders(operation),
+          })
+          declared = {
+            filename: res?.data?.filename ?? undefined,
+            contentType: res?.data?.content_type ?? undefined,
+          }
+        }
+      } catch {
+        // Best effort: without the record we fall back to the type carried by
+        // the source below, and a genuinely bad id fails on the send itself.
+      }
+    }
+
     // Byte count of the file payload(s) we actually append, used by
     // executeOperation to detect a truncated store. Only the buffer-producing
     // branches below (data: URI, bare base64, fetched URL — the remote sources
@@ -130,13 +158,22 @@ export class HttpClient {
         // so also accept the bytes inline (data: URI or bare base64) or a URL
         // the server can fetch. The path branch is kept for stdio use.
         try {
-          const filename = typeof params.filename === 'string' ? params.filename : name
+          const filename = typeof params.filename === 'string' ? params.filename : declared?.filename ?? name
+
+          // Pass the part's Content-Type explicitly: Notion's recorded
+          // content_type first, else the type the source itself carries
+          // (stripped of parameters like charset). With neither, form-data
+          // falls back to guessing from the filename as before.
+          const appendBuffer = (buf: Buffer, sourceType?: string | null) => {
+            uploadedBytes += buf.length
+            const contentType = declared?.contentType ?? (sourceType ? sourceType.split(';')[0].trim() : undefined)
+            formData.append(name, buf, contentType ? { filename, contentType } : { filename })
+          }
 
           if (/^data:/i.test(source)) {
             const b64 = source.slice(source.indexOf(',') + 1)
-            const buf = Buffer.from(b64, 'base64')
-            uploadedBytes += buf.length
-            formData.append(name, buf, { filename })
+            const mediaType = /^data:([^;,]+)/i.exec(source)?.[1]
+            appendBuffer(Buffer.from(b64, 'base64'), mediaType)
             return
           }
 
@@ -145,18 +182,14 @@ export class HttpClient {
             if (!res.ok) {
               throw new Error(`GET ${source} returned ${res.status}`)
             }
-            const buf = Buffer.from(await res.arrayBuffer())
-            uploadedBytes += buf.length
-            formData.append(name, buf, { filename })
+            appendBuffer(Buffer.from(await res.arrayBuffer()), res.headers?.get?.('content-type'))
             return
           }
 
           // Bare base64: long, and containing none of the characters a path or
           // filename would have. A real path can't match this at 100+ chars.
           if (/^[A-Za-z0-9+/\s]{100,}={0,2}$/.test(source)) {
-            const buf = Buffer.from(source, 'base64')
-            uploadedBytes += buf.length
-            formData.append(name, buf, { filename })
+            appendBuffer(Buffer.from(source, 'base64'))
             return
           }
 
@@ -189,9 +222,10 @@ export class HttpClient {
       }
     }
 
-    // Add non-file parameters to form data
+    // Add non-file parameters to form data. `filename` is consumed above as
+    // the file part's metadata, not a form field of its own.
     for (const [key, value] of Object.entries(params)) {
-      if (!fileParams.includes(key)) {
+      if (!fileParams.includes(key) && key !== 'filename') {
         formData.append(key, value)
       }
     }
