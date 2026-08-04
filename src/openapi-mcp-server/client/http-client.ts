@@ -259,12 +259,34 @@ export class HttpClient {
       }
     }
 
+    // Fork fix (upload hygiene): only genuine body fields belong in the
+    // multipart payload. In OpenAPI 3 everything declared under `parameters`
+    // lives in the URL or the headers — executeOperation already puts path and
+    // query parameters into `urlParameters`, and header parameters are built by
+    // buildDefaultHeaders — so appending them here duplicated e.g.
+    // `file_upload_id` into the body of every send request. Notion ignores the
+    // stray part today, but that is undefined behaviour to depend on.
+    const declaredNonBodyParams = new Set<string>()
+    for (const param of operation.parameters ?? []) {
+      const resolved = this.resolveParameter(param)
+      if (resolved) declaredNonBodyParams.add(resolved.name)
+    }
+
     // Add non-file parameters to form data. `filename` is consumed above as
     // the file part's metadata, not a form field of its own.
     for (const [key, value] of Object.entries(params)) {
-      if (!fileParams.includes(key) && key !== 'filename') {
-        formData.append(key, value)
+      if (fileParams.includes(key) || key === 'filename' || declaredNonBodyParams.has(key)) {
+        continue
       }
+      // form-data dereferences the value while building the part header, so an
+      // explicit null/undefined blows up with an opaque TypeError deep inside
+      // the library. Say what is wrong instead.
+      if (value === null || value === undefined) {
+        throw new Error(
+          `Parameter "${key}" was sent as ${value === null ? 'null' : 'undefined'}; omit the parameter instead of sending an empty value.`,
+        )
+      }
+      formData.append(key, value)
     }
 
     return { formData, uploadedBytes: measurable ? uploadedBytes : null }
