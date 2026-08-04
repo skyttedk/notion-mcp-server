@@ -341,6 +341,92 @@ describe('HttpClient File Upload', () => {
     })
   })
 
+  // Fork fix (upload hygiene): only genuine body fields belong in the multipart
+  // payload — path/query parameters already travel in the URL — and an
+  // explicitly empty optional value must fail with a readable message instead
+  // of an opaque TypeError from inside form-data.
+  describe('upload request hygiene', () => {
+    const B64 = Buffer.from('some bytes').toString('base64')
+
+    const hygieneSpec: OpenAPIV3.Document = {
+      openapi: '3.0.0',
+      info: { title: 'Test API', version: '1.0.0' },
+      paths: {
+        '/things/{thing_id}/upload': {
+          post: {
+            operationId: 'uploadThing',
+            parameters: [
+              { name: 'thing_id', in: 'path', required: true, schema: { type: 'string' } },
+              { name: 'variant', in: 'query', required: false, schema: { type: 'string' } },
+            ],
+            requestBody: {
+              content: {
+                'multipart/form-data': {
+                  schema: {
+                    type: 'object',
+                    required: ['file'],
+                    properties: {
+                      file: { type: 'string', format: 'binary' },
+                      description: { type: 'string' },
+                    },
+                  },
+                },
+              },
+            },
+            responses: { '200': { description: 'ok' } },
+          },
+        },
+      },
+    }
+
+    const hygieneApi = { uploadThing: vi.fn() }
+
+    const run = async (params: Record<string, any>) => {
+      // form-data is auto-mocked in this file, so a null value would be
+      // swallowed by the stub. Reproduce what the real library does: it reads
+      // `value.name`/`value.path` when building the part header, which throws
+      // on null/undefined.
+      vi.spyOn(FormData.prototype, 'append').mockImplementation(((_field: string, value: any) => {
+        if (value === null || value === undefined) {
+          throw new TypeError(`Cannot read properties of ${value} (reading 'name')`)
+        }
+      }) as any)
+      vi.spyOn(FormData.prototype, 'getHeaders').mockReturnValue({})
+      const hygieneClient = new HttpClient(baseConfig, hygieneSpec)
+      // @ts-expect-error - Mock the private api property
+      hygieneClient['api'] = Promise.resolve(hygieneApi)
+      const operation = hygieneSpec.paths['/things/{thing_id}/upload']!.post as OpenAPIV3.OperationObject & {
+        method: string
+        path: string
+      }
+      hygieneApi.uploadThing.mockResolvedValue({ data: { ok: true }, status: 200, headers: {} })
+      await hygieneClient.executeOperation(operation, params)
+      return vi.mocked(FormData.prototype.append).mock.calls.map((call) => call[0])
+    }
+
+    it('keeps path and query parameters out of the multipart body', async () => {
+      const fields = await run({ thing_id: 't-1', variant: 'small', file: B64, description: 'a note' })
+      expect(fields).not.toContain('thing_id')
+      expect(fields).not.toContain('variant')
+      expect(fields).toEqual(expect.arrayContaining(['file', 'description']))
+    })
+
+    it('still sends the path and query parameters in the URL', async () => {
+      await run({ thing_id: 't-1', variant: 'small', file: B64 })
+      expect(hygieneApi.uploadThing).toHaveBeenCalledWith(
+        { thing_id: 't-1', variant: 'small' },
+        expect.anything(),
+        expect.anything(),
+      )
+    })
+
+    it('rejects an explicitly empty optional value with a readable message', async () => {
+      await expect(run({ thing_id: 't-1', file: B64, description: null })).rejects.toThrow(
+        'Parameter "description" was sent as null; omit the parameter instead of sending an empty value.',
+      )
+    })
+  })
+
   it('should handle multiple file uploads', async () => {
     const mockFormData = new FormData()
     const mockFileStream1 = { pipe: vi.fn() }
