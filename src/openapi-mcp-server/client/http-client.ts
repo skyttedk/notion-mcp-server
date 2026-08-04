@@ -151,6 +151,29 @@ export class HttpClient {
   }
 
   /**
+   * The parameters an operation declares — the values that travel in the URL or
+   * the headers, and so never belong in the request body.
+   *
+   * This is the one place that rule is expressed. Both request-building paths
+   * need it (the multipart body must exclude every declared parameter; the JSON
+   * path moves path and query parameters into the URL and out of the body), and
+   * each used to re-derive it inline with a subtly different loop — so a change
+   * to one could silently leave the other behind. `$ref`'d declarations are
+   * followed, and a declaration without a name is dropped because it can match
+   * no argument. Callers apply their own `in` filter on top.
+   */
+  private declaredParameters(operation: OpenAPIV3.OperationObject): OpenAPIV3.ParameterObject[] {
+    const declared: OpenAPIV3.ParameterObject[] = []
+    for (const param of operation.parameters ?? []) {
+      const resolved = this.resolveParameter(param)
+      if (resolved && resolved.name) {
+        declared.push(resolved)
+      }
+    }
+    return declared
+  }
+
+  /**
    * Build the server-managed header parameters declared on an operation.
    *
    * Header parameters (currently `Notion-Version`) are not exposed as tool
@@ -305,11 +328,7 @@ export class HttpClient {
     // buildDefaultHeaders — so appending them here duplicated e.g.
     // `file_upload_id` into the body of every send request. Notion ignores the
     // stray part today, but that is undefined behaviour to depend on.
-    const declaredNonBodyParams = new Set<string>()
-    for (const param of operation.parameters ?? []) {
-      const resolved = this.resolveParameter(param)
-      if (resolved) declaredNonBodyParams.add(resolved.name)
-    }
+    const declaredNonBodyParams = new Set(this.declaredParameters(operation).map((param) => param.name))
 
     // Add non-file parameters to form data. `filename` is consumed above as
     // the file part's metadata, not a form field of its own.
@@ -352,17 +371,15 @@ export class HttpClient {
     const urlParameters: Record<string, any> = {}
     const bodyParams: Record<string, any> = formData || { ...params }
 
-    // Extract path and query parameters based on operation definition
-    if (operation.parameters) {
-      for (const param of operation.parameters) {
-        if ('name' in param && param.name && param.in) {
-          if (param.in === 'path' || param.in === 'query') {
-            if (params[param.name] !== undefined) {
-              urlParameters[param.name] = params[param.name]
-              if (!formData) {
-                delete bodyParams[param.name]
-              }
-            }
+    // Extract path and query parameters based on operation definition. Only
+    // these two locations are routed into the URL; header parameters are the
+    // business of buildDefaultHeaders.
+    for (const param of this.declaredParameters(operation)) {
+      if (param.in === 'path' || param.in === 'query') {
+        if (params[param.name] !== undefined) {
+          urlParameters[param.name] = params[param.name]
+          if (!formData) {
+            delete bodyParams[param.name]
           }
         }
       }
