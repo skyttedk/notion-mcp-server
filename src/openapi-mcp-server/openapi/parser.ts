@@ -8,6 +8,19 @@ type NewToolMethod = {
   returnSchema?: IJsonSchema
 }
 
+/**
+ * What a `format: binary` parameter accepts, appended to the parameter's own
+ * description so the caller sees it in the tool schema.
+ *
+ * Upstream advertised "absolute paths to local files", which is wrong for a
+ * remotely hosted server: it shares no filesystem with the caller, so every
+ * path it is given is a file-not-found. The sources that do work over HTTP are
+ * listed first, and the path is described for what it is — stdio only.
+ */
+export const FILE_PARAM_DESCRIPTION =
+  'file contents as a data: URI, a bare base64 string, or an http(s) URL the server can fetch; ' +
+  'a local file path works only when the server runs on the same machine as the caller (stdio)'
+
 export class OpenAPIToMCPConverter {
   private schemaCache: Record<string, IJsonSchema> = {}
   private nameCounter: number = 0
@@ -94,7 +107,7 @@ export class OpenAPIToMCPConverter {
     // Convert binary format to uri-reference and enhance description
     if (schema.format === 'binary') {
       result.format = 'uri-reference'
-      const binaryDesc = 'absolute paths to local files'
+      const binaryDesc = FILE_PARAM_DESCRIPTION
       result.description = schema.description ? `${schema.description} (${binaryDesc})` : binaryDesc
     } else {
       if (schema.format) {

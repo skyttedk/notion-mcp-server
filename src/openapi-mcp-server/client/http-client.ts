@@ -17,6 +17,42 @@ export type HttpClientResponse<T = any> = {
   headers: Headers
 }
 
+/** Only base64 characters (whitespace tolerated), with optional padding. */
+const BARE_BASE64_CHARS = /^[A-Za-z0-9+/\s]+={0,2}$/
+
+/**
+ * Whether a file-parameter value is inline base64 rather than a path.
+ *
+ * Length used to be the signal (100+ characters), which broke on tiny files:
+ * a 45-byte note encodes to ~60 characters and was taken for a path that does
+ * not exist. Shape is the better signal — base64 as emitted by any encoder is
+ * canonically padded to a multiple of four, which a path essentially never is
+ * unless it also avoids `.`, `\` and `/` entirely.
+ */
+function isBareBase64(source: string): boolean {
+  if (!BARE_BASE64_CHARS.test(source)) return false
+  const compact = source.replace(/\s+/g, '')
+  if (compact.length === 0) return false
+  // The 100+ clause is the fork's original rule, kept so long payloads that
+  // arrive without padding keep working.
+  return compact.length % 4 === 0 || compact.length >= 100
+}
+
+/**
+ * Whether the value names a file that exists on this machine. An existing file
+ * always wins over the base64 reading, so stdio callers passing a real path are
+ * unaffected no matter what the path looks like.
+ */
+function localFileExists(source: string): boolean {
+  // A path is bounded; never hand megabytes of base64 to the filesystem.
+  if (source.length > 4096) return false
+  try {
+    return fs.statSync(source).isFile()
+  } catch {
+    return false
+  }
+}
+
 export class HttpClientError extends Error {
   constructor(
     message: string,
@@ -186,9 +222,10 @@ export class HttpClient {
             return
           }
 
-          // Bare base64: long, and containing none of the characters a path or
-          // filename would have. A real path can't match this at 100+ chars.
-          if (/^[A-Za-z0-9+/\s]{100,}={0,2}$/.test(source)) {
+          // Bare base64, of any length: a tiny file's base64 is only a few
+          // characters, so length cannot be the signal. An existing file on
+          // disk still wins, which keeps stdio paths working.
+          if (isBareBase64(source) && !localFileExists(source)) {
             appendBuffer(Buffer.from(source, 'base64'))
             return
           }
