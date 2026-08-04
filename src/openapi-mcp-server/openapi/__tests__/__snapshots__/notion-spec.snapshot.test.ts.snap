@@ -6,6 +6,7 @@ exports[`Notion OpenAPI spec -> MCP tools (snapshot) > generates a stable set of
   "create-a-data-source",
   "create-a-file-upload",
   "delete-a-block",
+  "delete-a-comment",
   "get-block-children",
   "get-self",
   "get-user",
@@ -89,6 +90,21 @@ Error Responses:
     ],
     "required": [
       "block_id",
+    ],
+  },
+  {
+    "description": "Notion | Delete a comment permanently. This cannot be undone — a deleted comment is gone for good, with no trash to restore it from. Deletes exactly one comment, named by its id.
+Error Responses:
+400: Bad request
+403: Forbidden — the integration lacks the insert-comment capability
+404: Not found — no such comment, or it was created by someone else",
+    "httpMethod": "delete",
+    "name": "delete-a-comment",
+    "properties": [
+      "comment_id",
+    ],
+    "required": [
+      "comment_id",
     ],
   },
   {

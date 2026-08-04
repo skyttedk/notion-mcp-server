@@ -1970,6 +1970,119 @@
         "security": []
       }
     },
+    "/v1/comments/{comment_id}": {
+      "delete": {
+        "summary": "Delete a comment permanently. This cannot be undone — a deleted comment is gone for good, with no trash to restore it from. Deletes exactly one comment, named by its id.",
+        "description": "",
+        "operationId": "delete-a-comment",
+        "parameters": [
+          {
+            "name": "comment_id",
+            "in": "path",
+            "description": "The id of the one comment to delete. Take it from the `id` of a comment returned by API-retrieve-a-comment — not its `discussion_id`, which names the whole thread and cannot be deleted in one call. Deletion is permanent and irreversible: there is no undo and no way to read the comment back afterwards, so confirm the id is the intended comment before calling. Only comments this integration itself created can be deleted; someone else's comment answers 404.",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "$ref": "#/components/parameters/notionVersion"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "example": 400
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden — the integration lacks the insert-comment capability",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "example": 403
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found — no such comment, or it was created by someone else",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "example": 404
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "deprecated": false,
+        "security": []
+      }
+    },
     "/v1/data_sources/{data_source_id}/query": {
       "post": {
         "summary": "Query a data source",
