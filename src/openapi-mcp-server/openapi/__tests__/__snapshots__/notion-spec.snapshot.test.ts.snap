@@ -44,6 +44,7 @@ Error Responses:
     "properties": [
       "attachments",
       "discussion_id",
+      "display_name",
       "parent",
       "rich_text",
     ],
