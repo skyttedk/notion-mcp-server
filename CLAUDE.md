@@ -25,6 +25,28 @@ src/openapi-mcp-server/
 
 Only modify `scripts/notion-openapi.json`. Tools are auto-generated from the spec - no code changes needed elsewhere.
 
+### Fork patches to the bundled spec (re-apply after any upstream bump)
+
+This fork adds capabilities to `scripts/notion-openapi.json` that upstream's
+bundled spec does not expose. **A spec refresh from upstream silently reverts
+all of them** - re-apply after every bump:
+
+- **File uploads:** `API-create-a-file-upload`, `API-send-a-file-upload`,
+  `API-retrieve-a-file-upload`, plus `imageBlockRequest` / `fileBlockRequest`
+  accepting both `external` and `file_upload` sources.
+- **Comment attachments:** `attachments` on `create-a-comment` (`POST
+  /v1/comments`) - up to 3 entries of `{ file_upload_id, type: "file_upload" }`,
+  so a comment can carry a screenshot instead of only text.
+
+Code-side fork fixes are marked with a `Fork fix`/`Fork guard` comment in
+`src/openapi-mcp-server/client/http-client.ts` (remote-source `prepareFileUpload`,
+content-type preservation, truncated-upload guard).
+
+The guard tests live in `src/openapi-mcp-server/client/__tests__/comment-attachments.test.ts`,
+`http-client-upload.test.ts` and the tool-surface snapshot in
+`src/openapi-mcp-server/openapi/__tests__/notion-spec.snapshot.test.ts` - if a
+bump drops a patch, those fail rather than the capability disappearing quietly.
+
 ### Tool Generation Flow
 
 1. `OpenAPIToMCPConverter.convertToMCPTools()` iterates all paths/operations
