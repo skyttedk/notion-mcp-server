@@ -1887,6 +1887,40 @@
                       },
                       "additionalProperties": false
                     }
+                  },
+                  "display_name": {
+                    "type": "object",
+                    "description": "Who the comment is signed as. Omitted, it is signed with the integration's own name - the same name for everyone sharing this token, so on a busy page every author looks alike. Pass `{\"type\": \"custom\", \"custom\": {\"name\": \"...\"}}` to sign it with the individual agent or person posting instead. Applies to this comment only; it sets no default for later ones.",
+                    "required": [
+                      "type"
+                    ],
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "custom",
+                          "user",
+                          "integration",
+                          "connection"
+                        ],
+                        "description": "`custom` shows the name given in `custom.name` - the only value that carries a name of your choosing, and the one to use for signing as an agent. `user` shows the person who authorised the token. `integration` and `connection` are two names for the same thing, the integration itself, which is also what you get by omitting `display_name` entirely."
+                      },
+                      "custom": {
+                        "type": "object",
+                        "description": "The name to sign with. Required when `type` is `custom`, and meaningless otherwise.",
+                        "required": [
+                          "name"
+                        ],
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "description": "The label shown as the comment's author, e.g. the name of the agent posting. Free text - it is not resolved against Notion users, and confers no identity or permission."
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
                   }
                 }
               }
