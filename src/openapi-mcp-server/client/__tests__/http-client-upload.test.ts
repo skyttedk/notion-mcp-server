@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { HttpClient } from '../http-client'
+import { HttpClient, HttpClientError } from '../http-client'
 import { OpenAPIV3 } from 'openapi-types'
 import fs from 'fs'
 import FormData from 'form-data'
@@ -502,5 +502,80 @@ describe('HttpClient File Upload', () => {
     expect(FormData.prototype.append).toHaveBeenCalledWith('file2', mockFileStream2)
     expect(FormData.prototype.append).toHaveBeenCalledWith('description', 'Test files')
     expect(mockApiInstance.uploadFile).toHaveBeenCalledWith({}, expect.any(FormData), { headers: mockFormDataHeaders })
+  })
+
+  // Fork guard: when the bot-protection layer in front of Notion refuses an
+  // upload it answers with an HTML page rather than an API error. That page must
+  // never reach the caller — it is unreadable as an error, and it names the
+  // sender — so it is replaced with a short, explicit message.
+  describe('bot-protection refusal', () => {
+    // Invented stand-in. A real block page also carries the sender's network
+    // address and a reference id; neither may ever be reproduced in a fixture.
+    const BLOCK_PAGE =
+      '<!DOCTYPE html><html><head><title>Attention Required</title></head>' +
+      '<body><h1>Sorry, you have been blocked</h1>' +
+      '<p>This website is using a security service to protect itself.</p></body></html>'
+
+    const failingUpload = async (response: any): Promise<HttpClientError> => {
+      vi.spyOn(FormData.prototype, 'append').mockImplementation(() => {})
+      vi.spyOn(FormData.prototype, 'getHeaders').mockReturnValue({})
+      const operation = mockOpenApiSpec.paths['/upload']!.post as OpenAPIV3.OperationObject & {
+        method: string
+        path: string
+      }
+      mockApiInstance.uploadFile.mockRejectedValue({ response })
+      try {
+        await client.executeOperation(operation, {
+          file: `data:image/png;base64,${Buffer.from('fake screenshot bytes').toString('base64')}`,
+          filename: 'shot.png',
+        })
+      } catch (error) {
+        return error as HttpClientError
+      }
+      throw new Error('expected the upload to be rejected')
+    }
+
+    it('reports an HTML refusal as a short error naming the block and the status', async () => {
+      const error = await failingUpload({ status: 403, statusText: 'Forbidden', data: BLOCK_PAGE, headers: {} })
+
+      expect(error).toBeInstanceOf(HttpClientError)
+      expect(error.status).toBe(403)
+      expect(error.message).toContain('Blocked before reaching Notion')
+      expect(error.message).toContain('403')
+      expect(error.message).toContain('an HTML page')
+      expect(error.message.length).toBeLessThan(400)
+    })
+
+    it('withholds the block page from the error payload', async () => {
+      const error = await failingUpload({ status: 403, statusText: 'Forbidden', data: BLOCK_PAGE, headers: {} })
+
+      expect(error.data).toMatchObject({ object: 'error', code: 'blocked_before_notion' })
+      const payload = JSON.stringify(error.data)
+      expect(payload).not.toContain('<')
+      expect(payload).not.toContain('security service')
+      expect(payload).not.toContain('Attention Required')
+    })
+
+    it('catches a non-JSON refusal that is not HTML', async () => {
+      const error = await failingUpload({
+        status: 429,
+        statusText: 'Too Many Requests',
+        data: 'Service temporarily unavailable',
+        headers: {},
+      })
+
+      expect(error.status).toBe(429)
+      expect(error.message).toContain('Blocked before reaching Notion')
+      expect(error.message).toContain('a non-JSON body')
+      expect(error.data).toMatchObject({ code: 'blocked_before_notion' })
+    })
+
+    it('passes an ordinary JSON API error through unchanged', async () => {
+      const body = { object: 'error', status: 400, code: 'validation_error', message: 'body failed validation' }
+      const error = await failingUpload({ status: 400, statusText: 'Bad Request', data: body, headers: {} })
+
+      expect(error.data).toEqual(body)
+      expect(error.message).toBe('400 Bad Request')
+    })
   })
 })

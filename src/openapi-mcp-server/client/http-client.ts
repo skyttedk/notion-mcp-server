@@ -53,6 +53,45 @@ function localFileExists(source: string): boolean {
   }
 }
 
+/** Whether an error body could have come from Notion's API, which always answers JSON. */
+function looksLikeJson(body: string): boolean {
+  try {
+    JSON.parse(body)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Fork guard (bot-protection refusal): describe a refusal that never reached
+ * Notion, or null when the body is an ordinary API error.
+ *
+ * Notion answers JSON for every outcome, errors included. A non-JSON error body
+ * therefore did not come from Notion — it came from the bot-protection layer in
+ * front of it, which refuses the request and serves a full HTML page instead.
+ * That page used to be handed to the caller verbatim, so an agent saw a wall of
+ * markup rather than "you were blocked"; it also names the sender by network
+ * address and carries a reference id, neither of which belongs in a tool result
+ * or a log. So the page is dropped and replaced with a short, explicit error.
+ *
+ * Applied to file uploads only — that is where the refusal was observed and
+ * where the page body is largest. Other operations keep upstream's verbatim
+ * pass-through, so an HTML 5xx from the origin still reaches the caller as-is.
+ */
+function describeRefusal(status: number, body: unknown): string | null {
+  if (typeof body !== 'string') return null
+  const trimmed = body.trim()
+  if (trimmed.length === 0 || looksLikeJson(trimmed)) return null
+  const shape = /^<(?:!doctype|html|\?xml)/i.test(trimmed) ? 'an HTML page' : 'a non-JSON body'
+  return (
+    `Blocked before reaching Notion: the request was refused with HTTP ${status} and ${shape} ` +
+    `instead of an API response, so it never got past the bot-protection layer. ` +
+    `The page itself is withheld because it identifies the sender. ` +
+    `This is usually transient — retry in a few minutes.`
+  )
+}
+
 export class HttpClientError extends Error {
   constructor(
     message: string,
@@ -404,6 +443,18 @@ export class HttpClient {
         Object.entries(error.response.headers).forEach(([key, value]) => {
           if (value) headers.append(key, value.toString())
         })
+
+        // A refusal that never reached Notion is reported as itself, without the
+        // block page: see describeRefusal above.
+        const refusal = upload ? describeRefusal(error.response.status, error.response.data) : null
+        if (refusal) {
+          throw new HttpClientError(
+            refusal,
+            error.response.status,
+            { object: 'error', code: 'blocked_before_notion', message: refusal },
+            headers,
+          )
+        }
 
         throw new HttpClientError(error.response.statusText || 'Request failed', error.response.status, error.response.data, headers)
       }
