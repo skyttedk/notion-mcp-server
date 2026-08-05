@@ -15,6 +15,11 @@ encodes **Notion-specific behavior** that off-the-shelf OpenAPI→MCP libraries 
 not reproduce:
 
 - `"Notion | "` prefix on tool descriptions (`parser.ts`, `getDescription`).
+- Tool descriptions carry **both** the operation's `summary` and its
+  `description` (`parser.ts`, where `description` is built). Upstream showed
+  only the first one present, and since every Notion operation has a `summary`,
+  everything written in `description` was dropped before it reached the agent.
+  Both fields are therefore live documentation — write guidance in either.
 - Tolerance for clients that double-serialize nested JSON params: complex
   schemas are widened to `anyOf: [schema, string]` (`parser.ts`,
   `withStringFallback`) and decoded at call time (`proxy.ts`, `deserializeParams`).

@@ -38,6 +38,7 @@ exports[`Notion OpenAPI spec -> MCP tools (snapshot) > generates stable tool def
 [
   {
     "description": "Notion | Create comment
+Creates a comment in a page or existing discussion thread.
 Error Responses:
 400: Bad request",
     "httpMethod": "post",
@@ -55,6 +56,7 @@ Error Responses:
   },
   {
     "description": "Notion | Create a data source
+Create a new data source (database)
 Error Responses:
 400: Bad request",
     "httpMethod": "post",
@@ -70,7 +72,8 @@ Error Responses:
     ],
   },
   {
-    "description": "Notion | Create a file upload",
+    "description": "Notion | Create a file upload
+Step 1 of attaching a file to Notion. Reserves an upload and returns an \`id\`. Then call \`API-send-a-file-upload\` with that id to transfer the bytes, and finally reference it from a block or property as \`{"type": "file_upload", "file_upload": {"id": "<id>"}}\`. Single-part uploads are limited to 20MB. An upload must be attached within one hour or it expires.",
     "httpMethod": "post",
     "name": "create-a-file-upload",
     "properties": [
@@ -160,6 +163,7 @@ Error Responses:
   },
   {
     "description": "Notion | List templates in a data source
+List available templates for a data source
 Error Responses:
 400: Bad request",
     "httpMethod": "get",
@@ -175,6 +179,7 @@ Error Responses:
   },
   {
     "description": "Notion | Move a page
+Move a page to a different parent location
 Error Responses:
 400: Bad request",
     "httpMethod": "post",
@@ -258,6 +263,7 @@ Error Responses:
   },
   {
     "description": "Notion | Query a data source
+Query a data source (database) using filters and sorts
 Error Responses:
 400: Bad request",
     "httpMethod": "post",
@@ -291,6 +297,7 @@ Error Responses:
   },
   {
     "description": "Notion | Retrieve comments
+Retrieves a list of un-resolved [Comment objects](ref:comment-object) from a page or block.
 Error Responses:
 400: Bad request",
     "httpMethod": "get",
@@ -306,6 +313,7 @@ Error Responses:
   },
   {
     "description": "Notion | Retrieve a data source
+Retrieve metadata and schema for a data source
 Error Responses:
 400: Bad request",
     "httpMethod": "get",
@@ -319,6 +327,7 @@ Error Responses:
   },
   {
     "description": "Notion | Retrieve a database
+Retrieves a database object using the ID specified. Returns database metadata including the list of data source IDs contained in the database.
 Error Responses:
 400: Bad request",
     "httpMethod": "get",
@@ -331,7 +340,8 @@ Error Responses:
     ],
   },
   {
-    "description": "Notion | Retrieve a file upload",
+    "description": "Notion | Retrieve a file upload
+Check the status of a file upload ('pending', 'uploaded', 'expired', 'failed').",
     "httpMethod": "get",
     "name": "retrieve-a-file-upload",
     "properties": [
@@ -374,6 +384,7 @@ Error Responses:
   },
   {
     "description": "Notion | Retrieve a page as Markdown
+Retrieve the full content of a Notion page rendered as enhanced Markdown. Designed for agentic and developer tools that work natively with Markdown instead of the block JSON returned by Retrieve block children.
 Error Responses:
 400: Bad request
 403: The integration lacks the read/update content capability required for this page.
@@ -390,7 +401,8 @@ Error Responses:
     ],
   },
   {
-    "description": "Notion | Send a file upload",
+    "description": "Notion | Send a file upload
+Step 2: transfer the bytes for an upload created by \`API-create-a-file-upload\`. Because this server runs remotely and shares no filesystem with the caller, the \`file\` parameter accepts a data: URI, a bare base64 string, or an http(s) URL the server can fetch — a local path only works when running over stdio.",
     "httpMethod": "post",
     "name": "send-a-file-upload",
     "properties": [
@@ -437,6 +449,7 @@ Error Responses:
   },
   {
     "description": "Notion | Update a data source
+Update properties of a data source
 Error Responses:
 400: Bad request",
     "httpMethod": "patch",
@@ -453,6 +466,7 @@ Error Responses:
   },
   {
     "description": "Notion | Update a page's content as Markdown
+Update the content of a Notion page using enhanced Markdown. Prefer \`replace_content\` to overwrite the whole page or \`update_content\` for targeted find-and-replace edits.
 Error Responses:
 400: Bad request
 403: The integration lacks the read/update content capability required for this page.

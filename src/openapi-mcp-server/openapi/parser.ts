@@ -339,8 +339,13 @@ export class OpenAPIToMCPConverter {
       }
     }
 
-    // Build description including error responses
-    let description = operation.summary || operation.description || ''
+    // Build description including error responses.
+    // Fork fix: show the summary AND the description. The summary is the one-line title,
+    // the description is where the longer, hard-won guidance is written (how to
+    // attach a file, what Markdown mode to prefer). Preferring one over the
+    // other silently dropped everything written in `description`, so that text
+    // never reached an agent and maintainers wrote instructions into the void.
+    let description = [operation.summary, operation.description].filter(Boolean).join('\n')
     if (operation.responses) {
       const errorResponses = Object.entries(operation.responses)
         .filter(([code]) => code.startsWith('4') || code.startsWith('5'))

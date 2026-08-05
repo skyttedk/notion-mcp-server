@@ -50,7 +50,17 @@ all of them** - re-apply after every bump:
 
 Code-side fork fixes are marked with a `Fork fix`/`Fork guard` comment in
 `src/openapi-mcp-server/client/http-client.ts` (remote-source `prepareFileUpload`,
-content-type preservation, truncated-upload guard, incomplete-payload guard).
+content-type preservation, truncated-upload guard, incomplete-payload guard) and
+in `src/openapi-mcp-server/openapi/parser.ts` (tool descriptions carry both
+`summary` and `description`).
+
+**Both spec fields reach the agent.** Upstream built a tool's description from
+`summary || description`, and every Notion operation has a `summary` - so every
+word written in `description` was dropped before any agent saw it, including the
+file-upload guidance above. The fork joins the two. Write guidance in either
+field; neither is dead text. Cost of showing both: the `tools/list` payload grew
+149,166 -> 150,874 bytes (+1.1%), the whole list being dominated by parameter
+schemas rather than prose.
 
 Two different truncations are guarded, and both were seen in the wild: Notion
 storing fewer bytes than we sent (compared against the response's
