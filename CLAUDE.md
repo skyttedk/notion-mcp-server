@@ -37,6 +37,16 @@ all of them** - re-apply after every bump:
 - **Comment attachments:** `attachments` on `create-a-comment` (`POST
   /v1/comments`) - up to 3 entries of `{ file_upload_id, type: "file_upload" }`,
   so a comment can carry a screenshot instead of only text.
+- **Correcting a comment:** `API-update-a-comment` (`PATCH
+  /v1/comments/{comment_id}`), which Notion has always accepted but the bundled
+  description never listed - without it a typo could only be deleted and
+  reposted, losing the comment's place in the thread. The new `rich_text`
+  replaces the old text entirely.
+- **The 2000-character limit, stated:** both comment tools now say that Notion
+  caps `text.content` at 2000 characters and the `rich_text` array at 100 runs.
+  The cap is **per run, not per comment** (verified against the live API: two
+  runs totalling ~2016 characters are accepted), so long text is split across
+  runs rather than shortened. Unstated, it surfaced only as a bare 400.
 
 Code-side fork fixes are marked with a `Fork fix`/`Fork guard` comment in
 `src/openapi-mcp-server/client/http-client.ts` (remote-source `prepareFileUpload`,
@@ -52,6 +62,7 @@ against the file format's own end-of-file marker (PNG `IEND`, JPEG `FFD9`, GIF
 without a self-declared end are uploaded unchecked.
 
 The guard tests live in `src/openapi-mcp-server/client/__tests__/comment-attachments.test.ts`,
+`update-comment.test.ts`,
 `http-client-upload.test.ts`, `http-client.upload-integrity.test.ts` and the tool-surface snapshot in
 `src/openapi-mcp-server/openapi/__tests__/notion-spec.snapshot.test.ts` - if a
 bump drops a patch, those fail rather than the capability disappearing quietly.

@@ -28,6 +28,7 @@ exports[`Notion OpenAPI spec -> MCP tools (snapshot) > generates a stable set of
   "retrieve-page-markdown",
   "send-a-file-upload",
   "update-a-block",
+  "update-a-comment",
   "update-a-data-source",
   "update-page-markdown",
 ]
@@ -415,6 +416,23 @@ Error Responses:
     ],
     "required": [
       "block_id",
+    ],
+  },
+  {
+    "description": "Notion | Correct a comment that is already posted. Replaces its text in place, so the comment keeps its position in the thread instead of having to be deleted and written again. The new text replaces the old one entirely — there is no way to append to a comment.
+Error Responses:
+400: Bad request
+403: Forbidden — the integration lacks the insert-comment capability
+404: Not found — no such comment, or it was created by someone else",
+    "httpMethod": "patch",
+    "name": "update-a-comment",
+    "properties": [
+      "comment_id",
+      "rich_text",
+    ],
+    "required": [
+      "comment_id",
+      "rich_text",
     ],
   },
   {

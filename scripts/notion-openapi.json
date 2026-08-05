@@ -1842,6 +1842,8 @@
                   },
                   "rich_text": {
                     "type": "array",
+                    "description": "The comment's text, as one or more runs. Notion caps each run's `text.content` at 2000 characters and the array at 100 runs — the cap is per run, not per comment, so a message longer than 2000 characters goes into several runs here rather than being cut. Over the limit the whole call fails with a 400 validation error, so split long text before sending it.",
+                    "maxItems": 100,
                     "items": {
                       "type": "object",
                       "required": [
@@ -1856,7 +1858,8 @@
                           "properties": {
                             "content": {
                               "type": "string",
-                              "description": "The content of the comment"
+                              "description": "The content of this run of the comment. Maximum 2000 characters; a longer one is rejected with a 400. Continue past 2000 characters in the next entry of `rich_text` — the runs are joined into a single comment.",
+                              "maxLength": 2000
                             }
                           }
                         }
@@ -2030,6 +2033,187 @@
               "application/json": {
                 "schema": {
                   "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "example": 400
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden — the integration lacks the insert-comment capability",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "example": 403
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found — no such comment, or it was created by someone else",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "example": 404
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "deprecated": false,
+        "security": []
+      },
+      "patch": {
+        "summary": "Correct a comment that is already posted. Replaces its text in place, so the comment keeps its position in the thread instead of having to be deleted and written again. The new text replaces the old one entirely — there is no way to append to a comment.",
+        "description": "",
+        "operationId": "update-a-comment",
+        "parameters": [
+          {
+            "name": "comment_id",
+            "in": "path",
+            "description": "The id of the one comment to correct. Take it from the `id` of a comment returned by API-retrieve-a-comment — not its `discussion_id`, which names the whole thread. Only comments this integration itself created can be edited; someone else's comment answers 404.",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "$ref": "#/components/parameters/notionVersion"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "rich_text"
+                ],
+                "properties": {
+                  "rich_text": {
+                    "type": "array",
+                    "description": "The comment's new text, as one or more runs. It replaces the existing text completely, so send the whole corrected comment and not just the changed part. Notion caps each run's `text.content` at 2000 characters and the array at 100 runs — the cap is per run, not per comment, so text longer than 2000 characters goes into several runs here.",
+                    "maxItems": 100,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "text"
+                      ],
+                      "properties": {
+                        "text": {
+                          "type": "object",
+                          "required": [
+                            "content"
+                          ],
+                          "properties": {
+                            "content": {
+                              "type": "string",
+                              "description": "The content of this run of the comment. Maximum 2000 characters; a longer one is rejected with a 400. Continue past 2000 characters in the next entry of `rich_text` — the runs are joined into a single comment.",
+                              "maxLength": 2000
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                },
+                "examples": {
+                  "Result": {
+                    "value": {
+                      "object": "comment",
+                      "id": "b52b8ed6-e029-4707-a671-832549c09de3",
+                      "parent": {
+                        "type": "page_id",
+                        "page_id": "5c6a2821-6bb1-4a7e-b6e1-c50111515c3d"
+                      },
+                      "discussion_id": "f1407351-36f5-4c49-a13c-49f8ba11776d",
+                      "created_time": "2022-07-15T20:53:00.000Z",
+                      "last_edited_time": "2022-07-15T21:04:00.000Z",
+                      "created_by": {
+                        "object": "user",
+                        "id": "067dee40-6ebd-496f-b446-093c715fb5ec"
+                      },
+                      "rich_text": [
+                        {
+                          "type": "text",
+                          "text": {
+                            "content": "Hello world, corrected",
+                            "link": null
+                          },
+                          "plain_text": "Hello world, corrected",
+                          "href": null
+                        }
+                      ]
+                    }
+                  }
                 }
               }
             }
