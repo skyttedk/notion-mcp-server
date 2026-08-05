@@ -40,10 +40,19 @@ all of them** - re-apply after every bump:
 
 Code-side fork fixes are marked with a `Fork fix`/`Fork guard` comment in
 `src/openapi-mcp-server/client/http-client.ts` (remote-source `prepareFileUpload`,
-content-type preservation, truncated-upload guard).
+content-type preservation, truncated-upload guard, incomplete-payload guard).
+
+Two different truncations are guarded, and both were seen in the wild: Notion
+storing fewer bytes than we sent (compared against the response's
+`content_length`), and the *caller* handing us a payload that was already cut
+short. The second one no numeric comparison can catch - the byte counts agree
+because the fragment is all there ever was - so the decoded bytes are checked
+against the file format's own end-of-file marker (PNG `IEND`, JPEG `FFD9`, GIF
+`3B`, PDF `%%EOF`) and against base64 shapes that cannot be complete. Formats
+without a self-declared end are uploaded unchecked.
 
 The guard tests live in `src/openapi-mcp-server/client/__tests__/comment-attachments.test.ts`,
-`http-client-upload.test.ts` and the tool-surface snapshot in
+`http-client-upload.test.ts`, `http-client.upload-integrity.test.ts` and the tool-surface snapshot in
 `src/openapi-mcp-server/openapi/__tests__/notion-spec.snapshot.test.ts` - if a
 bump drops a patch, those fail rather than the capability disappearing quietly.
 

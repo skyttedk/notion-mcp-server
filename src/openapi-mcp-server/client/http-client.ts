@@ -53,6 +53,94 @@ function localFileExists(source: string): boolean {
   }
 }
 
+/**
+ * A file payload that is provably not the whole file. Thrown before anything is
+ * sent, and re-thrown unwrapped so the caller reads the diagnosis rather than
+ * `Failed to read file at <80 characters of base64>…`.
+ */
+class UploadPayloadError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'UploadPayloadError'
+  }
+}
+
+/**
+ * Decode inline base64, refusing input that cannot be a complete payload.
+ *
+ * Node's base64 decoder is deliberately forgiving: it skips characters outside
+ * the alphabet and stops dead at the first `=`, so a payload that lost its tail
+ * in transit decodes to a short buffer instead of failing. Two shapes are
+ * provable truncation and are rejected here rather than uploaded:
+ *
+ *  - a length of `4n + 1`, which no encoder can produce (a base64 string is
+ *    4n, 4n+2 or 4n+3 characters — unpadded tails are accepted, since the
+ *    fork already takes payloads that arrive without padding);
+ *  - a `=` anywhere but in the final padding, which silently ends the decode
+ *    at that point and would store only the bytes before it.
+ */
+function decodeBase64Payload(b64: string): Buffer {
+  const compact = b64.replace(/\s+/g, '')
+  if (compact.length % 4 === 1) {
+    throw new UploadPayloadError(
+      `The base64 payload is truncated: ${compact.length} characters cannot be a complete base64 string. ` +
+        `Send the whole file.`,
+    )
+  }
+  const firstPad = compact.indexOf('=')
+  if (firstPad !== -1 && firstPad < compact.length - 2) {
+    throw new UploadPayloadError(
+      `The base64 payload has padding ('=') at character ${firstPad} instead of at the end, so decoding it would ` +
+        `silently stop there and store only part of the file. Send one continuous base64 string, not concatenated chunks.`,
+    )
+  }
+  return Buffer.from(compact, 'base64')
+}
+
+/** Byte signature plus the trailer that marks the format's end-of-file. */
+const CONTAINER_FORMATS: { name: string; magic: number[]; endsWith?: number[]; endMarker?: string }[] = [
+  { name: 'PNG', magic: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], endsWith: [0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82] },
+  { name: 'JPEG', magic: [0xff, 0xd8, 0xff], endsWith: [0xff, 0xd9] },
+  { name: 'GIF', magic: [0x47, 0x49, 0x46, 0x38], endsWith: [0x3b] },
+  { name: 'PDF', magic: [0x25, 0x50, 0x44, 0x46, 0x2d], endMarker: '%%EOF' },
+]
+
+function startsWith(buf: Buffer, bytes: number[]): boolean {
+  return buf.length >= bytes.length && bytes.every((byte, i) => buf[i] === byte)
+}
+
+/**
+ * Fork guard (silent corruption): describe a file that is recognisably cut
+ * short, or null when it looks whole — or when the format is not one we can
+ * judge, which is the default for anything without a known signature.
+ *
+ * Notion stores whatever bytes it is given and reports the upload as
+ * successful, and the byte-count guard below only compares what we sent with
+ * what Notion stored — identical numbers when the payload was already short
+ * when it reached us. A 43,627-byte screenshot arrived as its first 8,751
+ * bytes and was attached as a broken image with no error anywhere. These
+ * formats all declare their own end, so a missing trailer proves the file is
+ * incomplete: say so instead of storing the fragment.
+ */
+function describeIncompleteFile(buf: Buffer): string | null {
+  for (const format of CONTAINER_FORMATS) {
+    if (!startsWith(buf, format.magic)) continue
+    if (format.endsWith) {
+      const tail = buf.subarray(-format.endsWith.length)
+      const complete = tail.length === format.endsWith.length && format.endsWith.every((byte, i) => tail[i] === byte)
+      if (complete) return null
+    } else if (format.endMarker) {
+      // The marker sits at the very end, but may be followed by whitespace.
+      if (buf.subarray(-1024).toString('latin1').includes(format.endMarker)) return null
+    }
+    return (
+      `The ${format.name} payload is incomplete: ${buf.length} bytes ending without the format's end-of-file marker, ` +
+      `so it was cut short before it reached the server. Nothing was uploaded — send the whole file.`
+    )
+  }
+  return null
+}
+
 /** Whether an error body could have come from Notion's API, which always answers JSON. */
 function looksLikeJson(body: string): boolean {
   try {
@@ -263,6 +351,14 @@ export class HttpClient {
           // (stripped of parameters like charset). With neither, form-data
           // falls back to guessing from the filename as before.
           const appendBuffer = (buf: Buffer, sourceType?: string | null) => {
+            // A part of a multi-part upload is a fragment by design; only a
+            // whole-file send can be judged complete.
+            if (params.part_number === undefined) {
+              const incomplete = describeIncompleteFile(buf)
+              if (incomplete) {
+                throw new UploadPayloadError(incomplete)
+              }
+            }
             uploadedBytes += buf.length
             const contentType = declared?.contentType ?? (sourceType ? sourceType.split(';')[0].trim() : undefined)
             formData.append(name, buf, contentType ? { filename, contentType } : { filename })
@@ -271,7 +367,7 @@ export class HttpClient {
           if (/^data:/i.test(source)) {
             const b64 = source.slice(source.indexOf(',') + 1)
             const mediaType = /^data:([^;,]+)/i.exec(source)?.[1]
-            appendBuffer(Buffer.from(b64, 'base64'), mediaType)
+            appendBuffer(decodeBase64Payload(b64), mediaType)
             return
           }
 
@@ -288,7 +384,7 @@ export class HttpClient {
           // characters, so length cannot be the signal. An existing file on
           // disk still wins, which keeps stdio paths working.
           if (isBareBase64(source) && !localFileExists(source)) {
-            appendBuffer(Buffer.from(source, 'base64'))
+            appendBuffer(decodeBase64Payload(source))
             return
           }
 
@@ -297,6 +393,11 @@ export class HttpClient {
           measurable = false
           formData.append(name, fs.createReadStream(source))
         } catch (error) {
+          // A payload diagnosis already says exactly what is wrong; wrapping it
+          // in "failed to read" would bury it behind an unreadable prefix.
+          if (error instanceof UploadPayloadError) {
+            throw error
+          }
           // Keep upstream's message (it names the source, which is what you
           // need to debug) but truncate: `source` may be megabytes of base64.
           const shown = source.length > 80 ? `${source.slice(0, 80)}...` : source
