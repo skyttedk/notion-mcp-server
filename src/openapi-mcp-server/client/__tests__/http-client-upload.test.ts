@@ -75,11 +75,18 @@ describe('HttpClient File Upload', () => {
     client['api'] = Promise.resolve(mockApiInstance)
   })
 
+  // A path is only streamed once it is known to exist (see 'unreadable file
+  // sources' below), so tests that mean to exercise the local-path branch must
+  // say so. Once, never for the whole file: elsewhere the same shape of string
+  // is meant to be read as base64.
+  const pathExistsOnce = () => vi.mocked(fs.statSync).mockReturnValueOnce({ isFile: () => true } as any)
+
   it('should handle file uploads with FormData', async () => {
     const mockFormData = new FormData()
     const mockFileStream = { pipe: vi.fn() }
     const mockFormDataHeaders = { 'content-type': 'multipart/form-data; boundary=---123' }
 
+    pathExistsOnce()
     vi.mocked(fs.createReadStream).mockReturnValue(mockFileStream as any)
     vi.spyOn(FormData.prototype, 'append').mockImplementation(() => {})
     vi.spyOn(FormData.prototype, 'getHeaders').mockReturnValue(mockFormDataHeaders)
@@ -108,9 +115,14 @@ describe('HttpClient File Upload', () => {
     expect(mockApiInstance.uploadFile).toHaveBeenCalledWith({}, expect.any(FormData), { headers: mockFormDataHeaders })
   })
 
-  it('should throw error for invalid file path', async () => {
+  // The file is there but cannot be opened (permissions, a broken device).
+  // That is a genuine read failure and keeps upstream's wrapped message; the
+  // separate case of a path that is simply not on this machine is covered in
+  // 'unreadable file sources' below.
+  it('should throw error when an existing file cannot be read', async () => {
+    pathExistsOnce()
     vi.mocked(fs.createReadStream).mockImplementation(() => {
-      throw new Error('File not found')
+      throw new Error('EACCES: permission denied')
     })
 
     const uploadPath = mockOpenApiSpec.paths['/upload']
@@ -119,11 +131,11 @@ describe('HttpClient File Upload', () => {
     }
     const operation = uploadPath.post as OpenAPIV3.OperationObject & { method: string; path: string }
     const params = {
-      file: '/nonexistent/file.txt',
+      file: '/unreadable/file.txt',
       description: 'Test file',
     }
 
-    await expect(client.executeOperation(operation, params)).rejects.toThrow('Failed to read file at /nonexistent/file.txt')
+    await expect(client.executeOperation(operation, params)).rejects.toThrow('Failed to read file at /unreadable/file.txt')
   })
 
   // Fork addition: a remotely hosted server shares no filesystem with the
@@ -172,9 +184,7 @@ describe('HttpClient File Upload', () => {
     // Length is no longer the signal, so an existing file must still win —
     // otherwise a stdio path made only of base64 characters would be decoded.
     it('prefers a local file that actually exists over reading it as base64', async () => {
-      // Once: the stat mock must not leak into later tests, where the same
-      // shape of string is meant to be read as base64.
-      vi.mocked(fs.statSync).mockReturnValueOnce({ isFile: () => true } as any)
+      pathExistsOnce()
       const stream = { pipe: vi.fn() }
       vi.mocked(fs.createReadStream).mockReturnValue(stream as any)
       const call = await runUpload('/data/report')
@@ -203,11 +213,58 @@ describe('HttpClient File Upload', () => {
     })
 
     it('still reads a local path, so stdio use is unchanged', async () => {
+      pathExistsOnce()
       const stream = { pipe: vi.fn() }
       vi.mocked(fs.createReadStream).mockReturnValue(stream as any)
       const call = await runUpload('/path/to/test.txt')
       expect(fs.createReadStream).toHaveBeenCalledWith('/path/to/test.txt')
       expect(call?.[1]).toBe(stream)
+    })
+  })
+
+  // The reported incident: an agent on another machine passed the path of a
+  // screenshot it had just taken, got a bare ENOENT naming no alternative, and
+  // concluded that attaching a file was impossible — so the screenshot was
+  // dropped. createReadStream never throws for a missing file (it emits ENOENT
+  // asynchronously, past every catch here), so the check has to come first.
+  describe('unreadable file sources', () => {
+    const uploadPath = () => {
+      const op = mockOpenApiSpec.paths['/upload']!.post as OpenAPIV3.OperationObject & { method: string; path: string }
+      vi.spyOn(FormData.prototype, 'append').mockImplementation(() => {})
+      vi.spyOn(FormData.prototype, 'getHeaders').mockReturnValue({})
+      mockApiInstance.uploadFile.mockResolvedValue({ data: { success: true }, status: 200, headers: {} })
+      return op
+    }
+
+    it('refuses a path that is not on this machine, and never opens a stream', async () => {
+      const promise = client.executeOperation(uploadPath(), { file: '/home/agent/screenshots/shot.png' })
+      await expect(promise).rejects.toThrow(/no such file on the machine running this server/)
+      expect(fs.createReadStream).not.toHaveBeenCalled()
+      expect(mockApiInstance.uploadFile).not.toHaveBeenCalled()
+    })
+
+    it('names every input form the server does accept', async () => {
+      const promise = client.executeOperation(uploadPath(), { file: '/home/agent/screenshots/shot.png' })
+      // What the caller needs in order to retry successfully, rather than a
+      // bare errno that reads as "this feature does not work".
+      await expect(promise).rejects.toThrow(/data: URI/)
+      await expect(promise).rejects.toThrow(/base64/)
+      await expect(promise).rejects.toThrow(/http\(s\) URL/)
+      await expect(promise).rejects.toThrow(/stdio/)
+    })
+
+    it('reports the basename only, never the directories around it', async () => {
+      const promise = client.executeOperation(uploadPath(), { file: 'C:\\Users\\someone\\Desktop\\shot.png' })
+      await expect(promise).rejects.toThrow(/'shot\.png'/)
+      // A path leaks the caller's username and folder layout into an error that
+      // gets pasted into tickets and chat logs.
+      await expect(promise).rejects.toThrow(/^(?!.*someone)/s)
+      await expect(promise).rejects.toThrow(/^(?!.*Desktop)/s)
+    })
+
+    it('does not wrap the diagnosis in upstream "Failed to read file at"', async () => {
+      const promise = client.executeOperation(uploadPath(), { file: '/home/agent/shot.png' })
+      await expect(promise).rejects.toThrow(/^(?!.*Failed to read file at)/s)
     })
   })
 
@@ -433,6 +490,8 @@ describe('HttpClient File Upload', () => {
     const mockFileStream2 = { pipe: vi.fn() }
     const mockFormDataHeaders = { 'content-type': 'multipart/form-data; boundary=---123' }
 
+    pathExistsOnce()
+    pathExistsOnce()
     vi.mocked(fs.createReadStream)
       .mockReturnValueOnce(mockFileStream1 as any)
       .mockReturnValueOnce(mockFileStream2 as any)

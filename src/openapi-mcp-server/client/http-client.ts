@@ -66,6 +66,29 @@ class UploadPayloadError extends Error {
 }
 
 /**
+ * A file source this server cannot read at all — in practice a path on the
+ * caller's machine, sent to a deployment that shares no disk with it. Also
+ * re-thrown unwrapped, for the same reason as above.
+ */
+class UploadSourceError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'UploadSourceError'
+  }
+}
+
+/**
+ * The tail of a path, for use in an error message.
+ *
+ * Never echo the whole value: a path carries the caller's username and folder
+ * names, and a non-path source can be megabytes of base64.
+ */
+function describeSource(source: string): string {
+  const tail = source.split(/[\\/]/).pop() || source
+  return tail.length > 60 ? `${tail.slice(0, 60)}...` : tail
+}
+
+/**
  * Decode inline base64, refusing input that cannot be a complete payload.
  *
  * Node's base64 decoder is deliberately forgiving: it skips characters outside
@@ -380,22 +403,42 @@ export class HttpClient {
             return
           }
 
+          // Resolved once and reused: it decides both that an existing file
+          // wins over the base64 reading and, below, whether a path-shaped
+          // value can be opened at all.
+          const existsLocally = localFileExists(source)
+
           // Bare base64, of any length: a tiny file's base64 is only a few
           // characters, so length cannot be the signal. An existing file on
           // disk still wins, which keeps stdio paths working.
-          if (isBareBase64(source) && !localFileExists(source)) {
+          if (isBareBase64(source) && !existsLocally) {
             appendBuffer(decodeBase64Payload(source))
             return
           }
 
           // Local filesystem path (stdio only): size is not tracked here, so the
           // truncation guard is disabled for this file.
+          //
+          // Check the file exists before streaming it. createReadStream does not
+          // throw for a missing file — it emits ENOENT asynchronously, well past
+          // the catch below — so without this the caller got a bare filesystem
+          // error naming none of the alternatives, and reasonably concluded that
+          // attaching a file is impossible. Which it is not; it just cannot be
+          // done by path against a server hosted somewhere else.
+          if (!existsLocally) {
+            throw new UploadSourceError(
+              `Cannot read '${describeSource(source)}': no such file on the machine running this server. ` +
+                `This server does not share a filesystem with you unless it runs locally over stdio, so a path ` +
+                `to your own machine cannot be opened here. Send the contents instead — a data: URI ` +
+                `('data:<mime>;base64,<...>'), a bare base64 string, or an http(s) URL this server can fetch.`,
+            )
+          }
           measurable = false
           formData.append(name, fs.createReadStream(source))
         } catch (error) {
           // A payload diagnosis already says exactly what is wrong; wrapping it
           // in "failed to read" would bury it behind an unreadable prefix.
-          if (error instanceof UploadPayloadError) {
+          if (error instanceof UploadPayloadError || error instanceof UploadSourceError) {
             throw error
           }
           // Keep upstream's message (it names the source, which is what you
