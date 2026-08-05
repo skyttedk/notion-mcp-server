@@ -77,6 +77,19 @@ The guard tests live in `src/openapi-mcp-server/client/__tests__/comment-attachm
 `src/openapi-mcp-server/openapi/__tests__/notion-spec.snapshot.test.ts` - if a
 bump drops a patch, those fail rather than the capability disappearing quietly.
 
+### The lockfile trap: optional platform packages with their own dependencies
+
+npm prunes the dependencies of optional platform-specific packages it did not
+install, but its strict install (`npm ci`) still expects them - so rewriting an
+existing lockfile produces one that `npm ci` rejects, and the symptom is a
+missing-package error naming something nobody added. That is why adding any
+dependency once broke the clean install; regenerating `package-lock.json` from
+scratch (2026-08-05) cleared it, because the versions the current ranges resolve
+to no longer ship such a build. **npm's bug is not fixed** - any future
+dependency that ships an optional platform-specific package carrying its own
+dependencies brings the wall straight back, and the fix is the same: delete
+`package-lock.json` and regenerate rather than hunting the named package.
+
 ### Tool Generation Flow
 
 1. `OpenAPIToMCPConverter.convertToMCPTools()` iterates all paths/operations
