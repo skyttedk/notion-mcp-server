@@ -181,6 +181,32 @@ describe('HttpClient File Upload', () => {
       expect(fs.createReadStream).not.toHaveBeenCalled()
     })
 
+    // The reported incident: a screenshot encoded on the caller's own machine
+    // was refused. Whitespace used to be tolerated only ahead of the padding,
+    // so base64 ending `==` plus a newline — what `base64`, `openssl base64`,
+    // `certutil -encode` and Python's `base64.encodebytes` all emit whenever
+    // the file's length is not a multiple of three — failed the shape test and
+    // came back as "no such file", advising the caller to send the very thing
+    // they had sent.
+    it('decodes padded base64 that ends with a newline, as command-line encoders emit', async () => {
+      const padded = Buffer.from('screenshot bytes that need padding') // 34 bytes -> '==' padding
+      expect(padded.toString('base64')).toMatch(/==$/)
+      const call = await runUpload(`${padded.toString('base64')}\n`)
+      expect(call?.[1]).toBeInstanceOf(Buffer)
+      expect((call?.[1] as Buffer).equals(padded)).toBe(true)
+      expect(fs.createReadStream).not.toHaveBeenCalled()
+    })
+
+    it('decodes base64 wrapped at 76 columns with a trailing newline', async () => {
+      const bytes = Buffer.from('x'.repeat(499) + 'y') // 500 bytes -> '=' padding
+      expect(bytes.toString('base64')).toMatch(/=$/)
+      const wrapped = `${(bytes.toString('base64').match(/.{1,76}/g) ?? []).join('\n')}\n`
+      expect(wrapped).toContain('\n')
+      const call = await runUpload(wrapped)
+      expect((call?.[1] as Buffer).equals(bytes)).toBe(true)
+      expect(fs.createReadStream).not.toHaveBeenCalled()
+    })
+
     // Length is no longer the signal, so an existing file must still win —
     // otherwise a stdio path made only of base64 characters would be decoded.
     it('prefers a local file that actually exists over reading it as base64', async () => {

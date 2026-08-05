@@ -17,8 +17,8 @@ export type HttpClientResponse<T = any> = {
   headers: Headers
 }
 
-/** Only base64 characters (whitespace tolerated), with optional padding. */
-const BARE_BASE64_CHARS = /^[A-Za-z0-9+/\s]+={0,2}$/
+/** Only base64 characters, once whitespace is stripped, with optional padding. */
+const BARE_BASE64_CHARS = /^[A-Za-z0-9+/]+={0,2}$/
 
 /**
  * Whether a file-parameter value is inline base64 rather than a path.
@@ -28,11 +28,21 @@ const BARE_BASE64_CHARS = /^[A-Za-z0-9+/\s]+={0,2}$/
  * not exist. Shape is the better signal — base64 as emitted by any encoder is
  * canonically padded to a multiple of four, which a path essentially never is
  * unless it also avoids `.`, `\` and `/` entirely.
+ *
+ * Whitespace is stripped before the shape is judged, not tolerated inside the
+ * pattern. Tolerating it inside only worked ahead of the padding, so base64
+ * that ended `==` followed by a newline — the exact output of `base64`,
+ * `openssl base64`, `certutil -encode` and Python's `base64.encodebytes`,
+ * whenever the file's length is not a multiple of three — failed the test and
+ * was reported as a missing file. The caller was then told to send "a bare
+ * base64 string", which is what they had just sent: a screenshot could be
+ * encoded correctly and still be unattachable, with nothing in the message
+ * pointing at the trailing newline.
  */
 function isBareBase64(source: string): boolean {
-  if (!BARE_BASE64_CHARS.test(source)) return false
   const compact = source.replace(/\s+/g, '')
   if (compact.length === 0) return false
+  if (!BARE_BASE64_CHARS.test(compact)) return false
   // The 100+ clause is the fork's original rule, kept so long payloads that
   // arrive without padding keep working.
   return compact.length % 4 === 0 || compact.length >= 100
