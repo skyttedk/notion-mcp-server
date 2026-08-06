@@ -1065,40 +1065,12 @@ describe('OpenAPIToMCPConverter - Additional Complex Tests', () => {
                   type: 'object',
                   properties: {},
                   required: [],
-                  $defs: {
-                    A: {
-                      type: 'object',
-                      description: 'A schema description',
-                      additionalProperties: true,
-                      properties: {
-                        name: {
-                          type: 'string',
-                          description: 'Name of A',
-                        },
-                        b: {
-                          description: 'B property in A',
-                          $ref: '#/$defs/B',
-                        },
-                      },
-                      required: ['name', 'b'],
-                    },
-                    B: {
-                      type: 'object',
-                      description: 'B schema description',
-                      additionalProperties: true,
-                      properties: {
-                        title: {
-                          type: 'string',
-                          description: 'Title of B',
-                        },
-                        a: {
-                          description: 'A property in B',
-                          $ref: '#/$defs/A',
-                        },
-                      },
-                      required: ['title', 'a'],
-                    },
-                  },
+                  // This operation takes no parameters and no body, so it reaches
+                  // no component: `$defs` holds only what a tool can reach. A and B
+                  // still appear in `returnSchema.$defs` below, which is where the
+                  // cyclic conversion this case exists to test is asserted — as it
+                  // also is on `createAB`, whose request body does reference A.
+                  $defs: {},
                 },
                 returnSchema: {
                   $ref: '#/$defs/A',
@@ -1383,67 +1355,11 @@ describe('OpenAPIToMCPConverter - Additional Complex Tests', () => {
                   type: 'object',
                   properties: {},
                   required: [],
-                  $defs: {
-                    Base: {
-                      type: 'object',
-                      description: 'Base schema description',
-                      additionalProperties: true,
-                      properties: {
-                        baseName: {
-                          type: 'string',
-                          description: 'Name in the base schema',
-                        },
-                      },
-                    },
-                    C: {
-                      description: 'C schema description',
-                      allOf: [{ $ref: '#/$defs/Base' }, { $ref: '#/$defs/D' }, { $ref: '#/$defs/E' }],
-                    },
-                    D: {
-                      type: 'object',
-                      additionalProperties: true,
-                      description: 'D schema description',
-                      properties: {
-                        dProp: {
-                          type: 'integer',
-                          description: 'D property integer',
-                        },
-                      },
-                    },
-                    E: {
-                      type: 'object',
-                      additionalProperties: true,
-                      description: 'E schema description',
-                      properties: {
-                        choice: {
-                          description: 'One of these choices',
-                          oneOf: [{ $ref: '#/$defs/F' }, { $ref: '#/$defs/G' }],
-                        },
-                      },
-                    },
-                    F: {
-                      type: 'object',
-                      additionalProperties: true,
-                      description: 'F schema description',
-                      properties: {
-                        fVal: {
-                          type: 'boolean',
-                          description: 'Boolean in F',
-                        },
-                      },
-                    },
-                    G: {
-                      type: 'object',
-                      additionalProperties: true,
-                      description: 'G schema description',
-                      properties: {
-                        gVal: {
-                          type: 'string',
-                          description: 'String in G',
-                        },
-                      },
-                    },
-                  },
+                  // No parameters and no body, so this tool reaches no component.
+                  // The allOf/oneOf chain (C -> Base, D, E -> F, G) that this case
+                  // exists to test is still asserted on `returnSchema.$defs` below,
+                  // where it is reachable and therefore kept in full.
+                  $defs: {},
                 },
                 returnSchema: {
                   $ref: '#/$defs/C',

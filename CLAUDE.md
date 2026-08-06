@@ -47,12 +47,54 @@ all of them** - re-apply after every bump:
   The cap is **per run, not per comment** (verified against the live API: two
   runs totalling ~2016 characters are accepted), so long text is split across
   runs rather than shortened. Unstated, it surfaced only as a bare 400.
+- **The Views API:** `list-views`, `create-a-view`, `retrieve-a-view`,
+  `update-a-view`, `delete-a-view`, `create-a-view-query`,
+  `get-view-query-results`, `delete-a-view-query`. Notion shipped these in GA and
+  the bundled spec predates them, so without the patch a database's *layout* -
+  which views exist, how they group, sort and filter, which properties show and
+  in what order, card size and compact layout - was unreachable while the
+  *schema* was fully manageable. `viewConfigurationRequest` is a union
+  discriminated on `type` covering all ten view types; the settings most often
+  wanted are `configuration.group_by.hide_empty_groups` (Notion resets it to
+  `true` whenever grouping is re-applied, which hides an empty status column such
+  as `Open` and makes it undraggable) and board/gallery `card_layout: "compact"` +
+  `cover_size`. Guarded by `src/openapi-mcp-server/openapi/__tests__/views-api.test.ts`
+  and `client/__tests__/http-client.views.test.ts`.
+
+**Views pin their own API version.** They need `2026-03-11`, while the rest of
+the server stays on `2025-09-03`. That is a per-operation `Notion-Version` header
+parameter in the spec - the same mechanism the page-markdown endpoints already
+use - so it cannot shift the version of any other operation. Notion documents the
+Views API as "2025-09-03 or later"; `2026-03-11` is what its own examples use and
+so what the field shapes here were read from. Do not "simplify" this by bumping
+the spec-wide default: that would move all 29 other operations onto an API
+version they were never checked against.
 
 Code-side fork fixes are marked with a `Fork fix`/`Fork guard` comment in
 `src/openapi-mcp-server/client/http-client.ts` (remote-source `prepareFileUpload`,
 content-type preservation, truncated-upload guard, incomplete-payload guard) and
 in `src/openapi-mcp-server/openapi/parser.ts` (tool descriptions carry both
-`summary` and `description`).
+`summary` and `description`; `$defs` pruning, below).
+
+### `$defs` carries only what a tool can reach
+
+`convertOperationToMCPMethod` used to set every tool's `$defs` to the spec's
+*entire* component collection, and `extractResponseType` did the same for
+`returnSchema`. A shared schema therefore cost its own size once per operation
+whether or not anything referenced it - the bill was components x operations.
+Measured on the real spec: 119 KB of a 147 KB `tools/list` payload was `$defs`,
+and adding the Views API's request schemas took the payload to **813 KB**. This
+is a silent cost: nothing errors, every client just pays it on every connection.
+
+`reachableDefs()` walks `$ref`s from the root instead, so the same 29 tools need
+5 KB and the branch that adds eight view tools *lowers* the payload to 77 KB. The
+walk runs over the already-converted schema (refs rewritten to `#/$defs/...`) and
+records a ref before queueing its target, which is what terminates the recursive
+schemas - a view filter can nest filters. `parser-defs-pruning.test.ts` pins the
+behaviour, including that pruning never leaves a dangling `$ref`.
+
+Watch for this when writing spec tests: an operation with no parameters and no
+request body now gets `$defs: {}`, not the whole component collection.
 
 **Both spec fields reach the agent.** Upstream built a tool's description from
 `summary || description`, and every Notion operation has a `summary` - so every
@@ -130,3 +172,8 @@ Tests are in `__tests__` directories adjacent to source files. Run with `npm tes
 Uses Notion API version `2025-09-03` (Data Source Edition). The spec includes both:
 - `/v1/databases/{database_id}` - Traditional database endpoints
 - `/v1/data_sources/{data_source_id}` - New data source endpoints
+
+Two groups of endpoints pin a newer version per operation instead: the
+page-markdown endpoints and `/v1/views*`, both on `2026-03-11`. `HttpClient`
+reads the header from each operation's own spec default, so these stay isolated
+from the rest of the API.

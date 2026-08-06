@@ -38,6 +38,494 @@
       }
     },
     "schemas": {
+      "viewSortRequest": {
+        "type": "object",
+        "description": "One sort rule applied to the view's rows. Same shape as a data source query sort.",
+        "required": ["property"],
+        "properties": {
+          "property": {
+            "type": "string",
+            "description": "Name or ID of the property to sort by."
+          },
+          "direction": {
+            "type": "string",
+            "enum": ["ascending", "descending"],
+            "description": "Sort direction. Defaults to ascending."
+          }
+        }
+      },
+      "viewFilterRequest": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Filter applied to the view, using exactly the same shape as a data source query filter: either a single property condition (`{\"property\": \"Status\", \"status\": {\"equals\": \"Done\"}}`) or a compound `{\"and\": [...]}` / `{\"or\": [...]}`. Notion validates each value against the property's configured options, and for status properties it also accepts group names, so an invalid value comes back as a descriptive error listing what is available. Send `null` on update to clear the filter entirely."
+      },
+      "viewGroupSortRequest": {
+        "type": "object",
+        "description": "Order the groups themselves are listed in — distinct from `sorts`, which orders rows inside a group.",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["manual", "ascending", "descending"],
+            "description": "`manual` keeps the order the options are defined in (for a status or select property this is the order shown in the Notion UI), which is usually what you want for a workflow board."
+          }
+        }
+      },
+      "viewGroupByRequest": {
+        "type": "object",
+        "description": "How rows or cards are grouped — board columns, or sections in a table. Which extra fields apply is decided by `type`, which must match the grouped property's own type. `select`, `multi_select`, `person`, `created_by`, `last_edited_by`, `relation` and `checkbox` take no extra field. `status` requires `group_by`: `group` (To-do / In progress / Complete) or `option` (one column per individual option). `date`, `created_time` and `last_edited_time` require `group_by` (`relative` | `day` | `week` | `month` | `year`) and may set `start_day_of_week`. `text`, `title`, `url`, `email` and `phone_number` require `group_by`: `exact` or `alphabet_prefix`. `number` may set `range_start` / `range_end` / `range_size` to bucket values. `formula` requires `group_by` to be a nested object describing the formula's result type (`{\"type\": \"number\", \"sort\": {...}, \"range_size\": 10}`) without a `property_id` of its own.",
+        "required": ["type", "property_id", "sort"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "select", "multi_select", "status", "person", "created_by", "last_edited_by",
+              "relation", "date", "created_time", "last_edited_time", "text", "title", "url",
+              "email", "phone_number", "number", "checkbox", "formula"
+            ],
+            "description": "The type of the property being grouped by."
+          },
+          "property_id": {
+            "type": "string",
+            "description": "ID of the property to group by. A property name is also accepted and resolved to its ID."
+          },
+          "sort": {
+            "$ref": "#/components/schemas/viewGroupSortRequest"
+          },
+          "hide_empty_groups": {
+            "type": "boolean",
+            "description": "Whether groups with no items are hidden. Notion defaults this to `true` when grouping is (re)applied, which silently hides a column such as an empty `Open` status — set it explicitly to `false` to keep every group visible so a card can still be dragged into an empty one."
+          },
+          "group_by": {
+            "description": "Required for `status`, `date`/`created_time`/`last_edited_time`, text-like and `formula` types; see this schema's description for the value each one takes. A string for every type except `formula`, which takes a nested group-by object.",
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": ["group", "option", "relative", "day", "week", "month", "year", "exact", "alphabet_prefix"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Formula-only nested grouping: `type` is the formula's result type (`date`, `text`, `number` or `checkbox`) plus that type's own fields and a `sort`. It carries no `property_id` — that is inherited from the parent."
+              }
+            ]
+          },
+          "start_day_of_week": {
+            "type": "integer",
+            "enum": [0, 1],
+            "description": "Which day a week starts on when grouping dates by week: 0 = Sunday, 1 = Monday."
+          },
+          "range_start": {
+            "type": "number",
+            "description": "Number grouping only: lower bound of the first bucket."
+          },
+          "range_end": {
+            "type": "number",
+            "description": "Number grouping only: upper bound of the last bucket."
+          },
+          "range_size": {
+            "type": "number",
+            "minimum": 1,
+            "description": "Number grouping only: width of each bucket."
+          }
+        }
+      },
+      "viewPropertyConfigRequest": {
+        "type": "object",
+        "description": "Visibility and display of a single property in this view. The order of the entries in the `properties` array is the order the columns or card fields appear in, so reordering the array reorders the view.",
+        "required": ["property_id"],
+        "properties": {
+          "property_id": {
+            "type": "string",
+            "description": "The property's ID, or its name — a name is resolved to the matching ID. If a string matches both one property's ID and a different property's name, the ID wins."
+          },
+          "visible": {
+            "type": "boolean",
+            "description": "Whether the property is shown in this view."
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Column width in pixels. Table views only."
+          },
+          "wrap": {
+            "type": "boolean",
+            "description": "Whether the value wraps onto multiple lines in its cell or card."
+          },
+          "status_show_as": {
+            "type": "string",
+            "enum": ["select", "checkbox"],
+            "description": "How a status property is rendered."
+          },
+          "card_property_width_mode": {
+            "type": "string",
+            "enum": ["full_line", "inline"],
+            "description": "Width behaviour of this property on compact board or gallery cards."
+          },
+          "date_format": {
+            "type": "string",
+            "enum": ["full", "short", "month_day_year", "day_month_year", "year_month_day", "relative"],
+            "description": "Display format for a date property."
+          },
+          "time_format": {
+            "type": "string",
+            "enum": ["12_hour", "24_hour", "hidden"],
+            "description": "Time display format for a date property."
+          }
+        }
+      },
+      "viewPropertiesRequest": {
+        "type": "array",
+        "description": "Which properties are visible and in what order. Array order is display order.",
+        "items": {
+          "$ref": "#/components/schemas/viewPropertyConfigRequest"
+        }
+      },
+      "viewCoverRequest": {
+        "type": "object",
+        "description": "Where the image at the top of each board or gallery card comes from.",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["page_cover", "page_content", "property"],
+            "description": "`page_cover` uses the page's own cover, `page_content` the first image in the page body, `property` an image held in a file property named by `property_id`."
+          },
+          "property_id": {
+            "type": "string",
+            "description": "File property to take the image from. Only meaningful when `type` is `property`."
+          }
+        }
+      },
+      "viewSubtaskConfigRequest": {
+        "type": "object",
+        "description": "How parent/child rows nest in a table view, via a self-referencing relation property.",
+        "properties": {
+          "property_id": {
+            "type": "string",
+            "description": "The self-referencing relation property that establishes the hierarchy."
+          },
+          "display_mode": {
+            "type": "string",
+            "enum": ["show", "hidden", "flattened", "disabled"],
+            "description": "`show` nests with toggles, `hidden` shows parents with a count, `flattened` lists sub-items with a parent indicator, `disabled` turns sub-item rendering off."
+          },
+          "filter_scope": {
+            "type": "string",
+            "enum": ["parents", "parents_and_subitems", "subitems"],
+            "description": "Which rows the view's filter is applied to."
+          },
+          "toggle_column_id": {
+            "type": "string",
+            "description": "Property whose column carries the expand/collapse toggle."
+          }
+        }
+      },
+      "viewChartAggregationRequest": {
+        "type": "object",
+        "description": "How values are aggregated for a chart axis or a number chart.",
+        "required": ["aggregator"],
+        "properties": {
+          "aggregator": {
+            "type": "string",
+            "enum": [
+              "count", "count_values", "sum", "average", "median", "min", "max", "range", "unique",
+              "empty", "not_empty", "percent_empty", "percent_not_empty", "checked", "unchecked",
+              "percent_checked", "percent_unchecked", "earliest_date", "latest_date", "date_range"
+            ],
+            "description": "`count` counts rows and needs no `property_id`; every other operator requires one."
+          },
+          "property_id": {
+            "type": "string",
+            "description": "Property to aggregate. Required for every aggregator except `count`."
+          }
+        }
+      },
+      "viewConfigurationRequest": {
+        "description": "Layout settings for the view. This is a union discriminated on `type`, and that `type` must equal the view's own `type`. When updating, send only the fields you want changed — anything omitted is left alone, and a nullable field set to `null` is cleared.",
+        "oneOf": [
+          {
+            "type": "object",
+            "title": "Table",
+            "required": ["type"],
+            "properties": {
+              "type": { "type": "string", "enum": ["table"] },
+              "properties": { "$ref": "#/components/schemas/viewPropertiesRequest" },
+              "group_by": {
+                "description": "Optional row grouping. `null` removes it.",
+                "oneOf": [
+                  { "$ref": "#/components/schemas/viewGroupByRequest" },
+                  { "type": "null" }
+                ]
+              },
+              "subtasks": {
+                "description": "Sub-item display. `null` resets to defaults; use `{\"display_mode\": \"disabled\"}` to actually switch it off.",
+                "oneOf": [
+                  { "$ref": "#/components/schemas/viewSubtaskConfigRequest" },
+                  { "type": "null" }
+                ]
+              },
+              "wrap_cells": { "type": "boolean", "description": "Whether cell content wraps." },
+              "frozen_column_index": { "type": "integer", "minimum": 0, "description": "How many columns stay pinned on the left when scrolling." },
+              "show_vertical_lines": { "type": "boolean", "description": "Whether vertical grid lines are drawn between columns." }
+            }
+          },
+          {
+            "type": "object",
+            "title": "Board",
+            "required": ["type"],
+            "properties": {
+              "type": { "type": "string", "enum": ["board"] },
+              "group_by": {
+                "description": "What the board's columns are. Required for a board view — a board cannot exist without grouping.",
+                "$ref": "#/components/schemas/viewGroupByRequest"
+              },
+              "sub_group_by": {
+                "description": "Optional second level of grouping within each column. `null` removes it.",
+                "oneOf": [
+                  { "$ref": "#/components/schemas/viewGroupByRequest" },
+                  { "type": "null" }
+                ]
+              },
+              "properties": { "$ref": "#/components/schemas/viewPropertiesRequest" },
+              "cover": {
+                "oneOf": [
+                  { "$ref": "#/components/schemas/viewCoverRequest" },
+                  { "type": "null" }
+                ]
+              },
+              "cover_size": {
+                "type": ["string", "null"],
+                "enum": ["small", "medium", "large", null],
+                "description": "Card size — how large the cover image is on each card."
+              },
+              "cover_aspect": {
+                "type": ["string", "null"],
+                "enum": ["contain", "cover", null],
+                "description": "`contain` fits the whole image, `cover` fills the card area and crops."
+              },
+              "card_layout": {
+                "type": ["string", "null"],
+                "enum": ["list", "compact", null],
+                "description": "`list` shows full cards, `compact` is the condensed card layout."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "title": "Gallery",
+            "required": ["type"],
+            "properties": {
+              "type": { "type": "string", "enum": ["gallery"] },
+              "properties": { "$ref": "#/components/schemas/viewPropertiesRequest" },
+              "cover": {
+                "oneOf": [
+                  { "$ref": "#/components/schemas/viewCoverRequest" },
+                  { "type": "null" }
+                ]
+              },
+              "cover_size": {
+                "type": ["string", "null"],
+                "enum": ["small", "medium", "large", null],
+                "description": "Card size — how large the cover image is on each card."
+              },
+              "cover_aspect": {
+                "type": ["string", "null"],
+                "enum": ["contain", "cover", null],
+                "description": "`contain` fits the whole image, `cover` fills the card area and crops."
+              },
+              "card_layout": {
+                "type": ["string", "null"],
+                "enum": ["list", "compact", null],
+                "description": "`list` shows full cards, `compact` is the condensed card layout."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "title": "List",
+            "required": ["type"],
+            "properties": {
+              "type": { "type": "string", "enum": ["list"] },
+              "properties": { "$ref": "#/components/schemas/viewPropertiesRequest" }
+            }
+          },
+          {
+            "type": "object",
+            "title": "Calendar",
+            "required": ["type", "date_property_id"],
+            "properties": {
+              "type": { "type": "string", "enum": ["calendar"] },
+              "date_property_id": { "type": "string", "description": "Date property that positions each item on the calendar." },
+              "properties": { "$ref": "#/components/schemas/viewPropertiesRequest" },
+              "view_range": { "type": ["string", "null"], "enum": ["week", "month", null], "description": "Default range shown." },
+              "show_weekends": { "type": ["boolean", "null"], "description": "Whether weekend days are shown." }
+            }
+          },
+          {
+            "type": "object",
+            "title": "Timeline",
+            "required": ["type", "date_property_id"],
+            "properties": {
+              "type": { "type": "string", "enum": ["timeline"] },
+              "date_property_id": { "type": "string", "description": "Date property giving each item its start." },
+              "end_date_property_id": { "type": ["string", "null"], "description": "Date property giving each item its end. `null` clears it." },
+              "properties": { "$ref": "#/components/schemas/viewPropertiesRequest" },
+              "show_table": { "type": ["boolean", "null"], "description": "Whether the table panel is shown beside the timeline." },
+              "table_properties": { "$ref": "#/components/schemas/viewPropertiesRequest" },
+              "preference": {
+                "description": "Zoom and centring of the timeline.",
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": ["zoom_level"],
+                    "properties": {
+                      "zoom_level": {
+                        "type": "string",
+                        "enum": ["hours", "day", "week", "bi_week", "month", "quarter", "year", "5_years"]
+                      },
+                      "center_timestamp": { "type": "integer", "description": "Milliseconds since the epoch to centre the timeline on." }
+                    }
+                  },
+                  { "type": "null" }
+                ]
+              },
+              "arrows_by": {
+                "description": "Relation property drawn as dependency arrows. `{\"property_id\": null}` or `null` disables arrows.",
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": { "property_id": { "type": ["string", "null"] } }
+                  },
+                  { "type": "null" }
+                ]
+              },
+              "color_by": { "type": ["boolean", "null"], "description": "Whether items are coloured by a property." }
+            }
+          },
+          {
+            "type": "object",
+            "title": "Map",
+            "required": ["type"],
+            "properties": {
+              "type": { "type": "string", "enum": ["map"] },
+              "height": { "type": ["string", "null"], "enum": ["small", "medium", "large", "extra_large", null] },
+              "map_by": { "type": ["string", "null"], "description": "Location property used to place each pin." },
+              "properties": { "$ref": "#/components/schemas/viewPropertiesRequest" }
+            }
+          },
+          {
+            "type": "object",
+            "title": "Form",
+            "required": ["type"],
+            "properties": {
+              "type": { "type": "string", "enum": ["form"] },
+              "is_form_closed": { "type": ["boolean", "null"], "description": "Whether the form has stopped accepting submissions." },
+              "anonymous_submissions": { "type": ["boolean", "null"], "description": "Whether people who are not logged in may submit." },
+              "submission_permissions": {
+                "type": ["string", "null"],
+                "enum": ["none", "comment_only", "reader", "read_and_write", "editor", null],
+                "description": "What access the submitter keeps on the page their submission creates."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "title": "Chart",
+            "required": ["type", "chart_type"],
+            "description": "Charts read data either as grouped data (`x_axis` + `y_axis`) or as raw property values (`x_axis_property_id` + `y_axis_property_id`); use one pair or the other.",
+            "properties": {
+              "type": { "type": "string", "enum": ["chart"] },
+              "chart_type": {
+                "type": "string",
+                "enum": ["column", "bar", "line", "donut", "number"],
+                "description": "`column` is vertical bars, `bar` horizontal, `number` a single aggregated value."
+              },
+              "x_axis": {
+                "description": "Grouping for the x axis, same shape as `group_by`. `null` clears it.",
+                "oneOf": [
+                  { "$ref": "#/components/schemas/viewGroupByRequest" },
+                  { "type": "null" }
+                ]
+              },
+              "y_axis": {
+                "oneOf": [
+                  { "$ref": "#/components/schemas/viewChartAggregationRequest" },
+                  { "type": "null" }
+                ]
+              },
+              "x_axis_property_id": { "type": ["string", "null"], "description": "Property supplying x values in raw-results mode." },
+              "y_axis_property_id": { "type": ["string", "null"], "description": "Property supplying y values in raw-results mode." },
+              "value": {
+                "description": "The aggregation a `number` chart displays.",
+                "oneOf": [
+                  { "$ref": "#/components/schemas/viewChartAggregationRequest" },
+                  { "type": "null" }
+                ]
+              },
+              "stack_by": {
+                "description": "Second grouping for stacked or side-by-side column, bar and line charts.",
+                "oneOf": [
+                  { "$ref": "#/components/schemas/viewGroupByRequest" },
+                  { "type": "null" }
+                ]
+              },
+              "sort": { "type": "string", "enum": ["manual", "x_ascending", "x_descending", "y_ascending", "y_descending"] },
+              "color_theme": {
+                "type": "string",
+                "enum": ["gray", "blue", "yellow", "green", "purple", "teal", "orange", "pink", "red", "auto", "colorful"]
+              },
+              "height": { "type": "string", "enum": ["small", "medium", "large", "extra_large"] },
+              "hide_empty_groups": { "type": "boolean", "description": "Whether x-axis groups with no data are hidden." },
+              "legend_position": { "type": "string", "enum": ["off", "bottom", "side"] },
+              "show_data_labels": { "type": "boolean" },
+              "color_by_value": { "type": "boolean", "description": "Bar and column charts only: shade each bar along a gradient by its value." },
+              "axis_labels": { "type": "string", "enum": ["none", "x_axis", "y_axis", "both"] },
+              "grid_lines": { "type": "string", "enum": ["none", "horizontal", "vertical", "both"] },
+              "y_axis_min": { "type": ["number", "null"] },
+              "y_axis_max": { "type": ["number", "null"] },
+              "caption": { "type": ["string", "null"], "description": "Text shown under the chart." },
+              "cumulative": { "type": "boolean", "description": "Line charts only." },
+              "smooth_line": { "type": "boolean", "description": "Line charts only." },
+              "hide_line_fill_area": { "type": "boolean", "description": "Line charts only." },
+              "group_style": {
+                "type": "string",
+                "enum": ["normal", "percent", "side_by_side"],
+                "description": "Bar and column charts only: `normal` stacks, `percent` normalises to 100%, `side_by_side` places bars next to each other."
+              },
+              "donut_labels": { "type": "string", "enum": ["none", "value", "name", "name_and_value"], "description": "Donut charts only." },
+              "hide_title": { "type": "boolean", "description": "Number charts only." },
+              "reference_lines": {
+                "type": ["array", "null"],
+                "description": "Horizontal lines drawn at fixed y values for comparison.",
+                "items": {
+                  "type": "object",
+                  "required": ["value", "label", "color", "dash_style"],
+                  "properties": {
+                    "id": { "type": "string", "description": "Generated when omitted." },
+                    "value": { "type": "number" },
+                    "label": { "type": "string" },
+                    "color": {
+                      "type": "string",
+                      "enum": ["gray", "lightgray", "brown", "yellow", "orange", "green", "blue", "purple", "pink", "red"]
+                    },
+                    "dash_style": { "type": "string", "enum": ["solid", "dash"] }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "title": "Dashboard",
+            "required": ["type"],
+            "description": "A dashboard's layout is read-only: it is returned when retrieving the view, but cannot be set here. Build a dashboard by creating widget views against it — call create-a-view with `view_id` set to the dashboard's ID.",
+            "properties": {
+              "type": { "type": "string", "enum": ["dashboard"] }
+            }
+          }
+        ]
+      },
       "richTextRequest": {
         "type": "object",
         "required": [
@@ -423,9 +911,558 @@
     {
       "name": "Comments",
       "description": "Comment endpoints"
+    },
+    {
+      "name": "Views",
+      "description": "View endpoints for reading and configuring database views — layout, grouping, sorts, filters and property visibility"
     }
   ],
   "paths": {
+    "/v1/views": {
+      "get": {
+        "summary": "List views",
+        "description": "List the views of a database, or every view that reads a given data source. Pass `database_id` for the views shown as tabs on one database, or `data_source_id` to also pick up linked views of that data source living on other pages across the workspace. Results only include views the integration can access. Each entry is a reference carrying just `object` and `id` — call Retrieve a view for a view's filter, sorts and layout.",
+        "operationId": "list-views",
+        "tags": ["Views"],
+        "parameters": [
+          {
+            "name": "database_id",
+            "in": "query",
+            "description": "The database whose views to list. This is the database container's ID, not a data source ID. At least one of `database_id` or `data_source_id` is required.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "data_source_id",
+            "in": "query",
+            "description": "List every view reading this data source, including linked views on other pages. At least one of `database_id` or `data_source_id` is required.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "start_cursor",
+            "in": "query",
+            "description": "Return the page of results starting after this cursor.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "description": "Number of items to return. Maximum 100, default 100.",
+            "schema": { "type": "integer", "format": "int32" }
+          },
+          {
+            "name": "Notion-Version",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "default": "2026-03-11" },
+            "description": "The Notion API version. The view endpoints require 2025-09-03 or later; this server pins 2026-03-11, the version Notion's own view documentation is written against."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": { "type": "string", "example": "error" },
+                    "status": { "type": "integer", "example": 400 },
+                    "code": { "type": "string" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "deprecated": false,
+        "security": []
+      },
+      "post": {
+        "summary": "Create a view",
+        "description": "Create a view over a data source: a table, board, calendar, timeline, gallery, list, form, chart, map or dashboard, with its own filter, sorts and layout. Exactly one of `database_id`, `view_id` or `create_database` must be given — `database_id` adds a tab to an existing database, `view_id` adds a widget to an existing dashboard, and `create_database` puts a linked view of an existing data source on a page. Note that `database_id` and `data_source_id` are different IDs and both are needed: retrieve the database to find its `data_sources` array. `configuration.type` must equal the view's `type`, and a board view must carry a `group_by`.",
+        "operationId": "create-a-view",
+        "tags": ["Views"],
+        "parameters": [
+          {
+            "name": "Notion-Version",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "default": "2026-03-11" },
+            "description": "The Notion API version. The view endpoints require 2025-09-03 or later; this server pins 2026-03-11, the version Notion's own view documentation is written against."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["data_source_id", "name", "type"],
+                "properties": {
+                  "data_source_id": {
+                    "type": "string",
+                    "description": "The data source the view reads. Found in the `data_sources` array of the database object — not the same as `database_id`."
+                  },
+                  "name": { "type": "string", "description": "Display name of the view, shown on its tab." },
+                  "type": {
+                    "type": "string",
+                    "enum": ["table", "board", "list", "calendar", "timeline", "gallery", "form", "chart", "map", "dashboard"],
+                    "description": "The view's layout. `configuration.type` must match this."
+                  },
+                  "database_id": {
+                    "type": "string",
+                    "description": "Create the view as a tab on this database. Mutually exclusive with `view_id` and `create_database`."
+                  },
+                  "view_id": {
+                    "type": "string",
+                    "description": "Add the view as a widget to this dashboard view. Mutually exclusive with `database_id` and `create_database`."
+                  },
+                  "create_database": {
+                    "type": "object",
+                    "description": "Put a linked view of an existing data source on a page, creating a lightweight database container there. Unlike creating a database, no new schema is made — the view points at a data source another database owns, so the integration needs access to both. Mutually exclusive with `database_id` and `view_id`.",
+                    "required": ["parent"],
+                    "properties": {
+                      "parent": {
+                        "type": "object",
+                        "description": "The page to place the linked database on, as `{\"type\": \"page_id\", \"page_id\": \"...\"}`.",
+                        "required": ["page_id"],
+                        "properties": {
+                          "type": { "type": "string", "enum": ["page_id"] },
+                          "page_id": { "type": "string" }
+                        }
+                      },
+                      "position": {
+                        "type": "object",
+                        "description": "Where in the page the database block goes. `{\"type\": \"after_block\", \"block_id\": \"...\"}` places it after a block that is a direct child of the parent page. Defaults to the end of the page.",
+                        "properties": {
+                          "type": { "type": "string", "enum": ["after_block"] },
+                          "block_id": { "type": "string" }
+                        }
+                      }
+                    }
+                  },
+                  "filter": { "$ref": "#/components/schemas/viewFilterRequest" },
+                  "sorts": {
+                    "type": "array",
+                    "description": "Sort rules for the view's rows.",
+                    "items": { "$ref": "#/components/schemas/viewSortRequest" }
+                  },
+                  "quick_filters": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "description": "Filters offered in the view's filter bar, as a map from property name or ID to a filter condition written without its `property` field — for example `{\"Status\": {\"status\": {\"equals\": \"In progress\"}}}`. A people filter accepts `\"me\"` as its value, so \"assigned to me\" needs no user ID."
+                  },
+                  "configuration": { "$ref": "#/components/schemas/viewConfigurationRequest" },
+                  "position": {
+                    "type": "object",
+                    "description": "Where the new tab sits in the view bar. `{\"type\": \"start\"}`, `{\"type\": \"end\"}` (the default), or `{\"type\": \"after_view\", \"view_id\": \"...\"}`. Only valid together with `database_id`.",
+                    "required": ["type"],
+                    "properties": {
+                      "type": { "type": "string", "enum": ["start", "end", "after_view"] },
+                      "view_id": { "type": "string", "description": "Required when `type` is `after_view`." }
+                    }
+                  },
+                  "placement": {
+                    "type": "object",
+                    "description": "Where the new widget sits in a dashboard. `{\"type\": \"new_row\"}` appends a row, `{\"type\": \"new_row\", \"row_index\": 0}` inserts one, `{\"type\": \"existing_row\", \"row_index\": 2}` joins an existing row (maximum 4 widgets per row). Only valid together with `view_id`.",
+                    "required": ["type"],
+                    "properties": {
+                      "type": { "type": "string", "enum": ["new_row", "existing_row"] },
+                      "row_index": { "type": "integer", "minimum": 0 }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": { "type": "string", "example": "error" },
+                    "status": { "type": "integer", "example": 400 },
+                    "code": { "type": "string" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "deprecated": false,
+        "security": []
+      }
+    },
+    "/v1/views/{view_id}": {
+      "get": {
+        "summary": "Retrieve a view",
+        "description": "Retrieve one view in full: its name, type, filter, sorts, quick filters and layout configuration. This is the only way to read a view's settings — List views returns bare `id` references. Retrieving a dashboard returns its layout, the rows of widgets with their view IDs, widths and row indexes.",
+        "operationId": "retrieve-a-view",
+        "tags": ["Views"],
+        "parameters": [
+          {
+            "name": "view_id",
+            "in": "path",
+            "required": true,
+            "description": "Identifier for a Notion view.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "Notion-Version",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "default": "2026-03-11" },
+            "description": "The Notion API version. The view endpoints require 2025-09-03 or later; this server pins 2026-03-11, the version Notion's own view documentation is written against."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": { "type": "string", "example": "error" },
+                    "status": { "type": "integer", "example": 400 },
+                    "code": { "type": "string" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "deprecated": false,
+        "security": []
+      },
+      "patch": {
+        "summary": "Update a view",
+        "description": "Change a view's name, filter, sorts, quick filters or layout. Every field is optional and anything omitted is left as it was, so a partial update is safe. To remove a setting, send it as `null` — `filter: null` drops the filter, `configuration: {\"type\": \"table\", \"group_by\": null}` ungroups a table. Sending a `quick_filters` entry replaces just that one and leaves the rest; setting an entry to `null` removes it. `configuration.type` must match the view's existing type. Note that re-applying grouping resets `hide_empty_groups` to true, so set it explicitly to false in the same call if empty groups must stay visible.",
+        "operationId": "update-a-view",
+        "tags": ["Views"],
+        "parameters": [
+          {
+            "name": "view_id",
+            "in": "path",
+            "required": true,
+            "description": "Identifier for a Notion view.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "Notion-Version",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "default": "2026-03-11" },
+            "description": "The Notion API version. The view endpoints require 2025-09-03 or later; this server pins 2026-03-11, the version Notion's own view documentation is written against."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string", "description": "New display name for the view." },
+                  "filter": {
+                    "description": "Replaces the view's filter. `null` clears it.",
+                    "oneOf": [
+                      { "$ref": "#/components/schemas/viewFilterRequest" },
+                      { "type": "null" }
+                    ]
+                  },
+                  "sorts": {
+                    "type": ["array", "null"],
+                    "description": "Replaces the view's sort rules. `null` clears them.",
+                    "items": { "$ref": "#/components/schemas/viewSortRequest" }
+                  },
+                  "quick_filters": {
+                    "type": ["object", "null"],
+                    "additionalProperties": true,
+                    "description": "Adds or replaces individual entries in the filter bar, keyed by property name or ID; entries you do not mention are kept. Set one entry to `null` to remove it, or the whole object to `null` to clear the bar."
+                  },
+                  "configuration": { "$ref": "#/components/schemas/viewConfigurationRequest" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": { "type": "string", "example": "error" },
+                    "status": { "type": "integer", "example": 400 },
+                    "code": { "type": "string" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "deprecated": false,
+        "security": []
+      },
+      "delete": {
+        "summary": "Delete a view",
+        "description": "Permanently remove a view from its database. This cannot be undone through the API. A database must keep at least one view, so deleting the last one fails with a validation error — to get rid of the database itself, set `in_trash` on the database instead. The response is a partial view object with only `object`, `id`, `parent` and `type`, since the view no longer exists to describe.",
+        "operationId": "delete-a-view",
+        "tags": ["Views"],
+        "parameters": [
+          {
+            "name": "view_id",
+            "in": "path",
+            "required": true,
+            "description": "Identifier for a Notion view.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "Notion-Version",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "default": "2026-03-11" },
+            "description": "The Notion API version. The view endpoints require 2025-09-03 or later; this server pins 2026-03-11, the version Notion's own view documentation is written against."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": { "type": "string", "example": "error" },
+                    "status": { "type": "integer", "example": 400 },
+                    "code": { "type": "string" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "deprecated": false,
+        "security": []
+      }
+    },
+    "/v1/views/{view_id}/queries": {
+      "post": {
+        "summary": "Create a view query",
+        "description": "Run a view's saved filter and sort and get the first page of matching pages back, so you see what a person looking at that view sees without rebuilding its filter logic yourself. The response carries the results plus a `query_id`, `total_count` and `has_more`; use Get view query results with that `query_id` to page through the rest. The cached result set expires on its own after about 15 minutes.",
+        "operationId": "create-a-view-query",
+        "tags": ["Views"],
+        "parameters": [
+          {
+            "name": "view_id",
+            "in": "path",
+            "required": true,
+            "description": "Identifier for a Notion view.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "Notion-Version",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "default": "2026-03-11" },
+            "description": "The Notion API version. The view endpoints require 2025-09-03 or later; this server pins 2026-03-11, the version Notion's own view documentation is written against."
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "page_size": {
+                    "type": "integer",
+                    "format": "int32",
+                    "description": "How many results to return in this first page. Maximum 100."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": { "type": "string", "example": "error" },
+                    "status": { "type": "integer", "example": 400 },
+                    "code": { "type": "string" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "deprecated": false,
+        "security": []
+      }
+    },
+    "/v1/views/{view_id}/queries/{query_id}": {
+      "get": {
+        "summary": "Get view query results",
+        "description": "Fetch a further page from a result set already produced by Create a view query, using the `query_id` it returned. Pass the previous response's `next_cursor` as `start_cursor`. The cached set expires after about 15 minutes, after which the query has to be created again.",
+        "operationId": "get-view-query-results",
+        "tags": ["Views"],
+        "parameters": [
+          {
+            "name": "view_id",
+            "in": "path",
+            "required": true,
+            "description": "Identifier for a Notion view.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "query_id",
+            "in": "path",
+            "required": true,
+            "description": "The `id` returned by Create a view query.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "start_cursor",
+            "in": "query",
+            "description": "Continue from this cursor, taken from the previous response's `next_cursor`.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "description": "How many results to return. Maximum 100.",
+            "schema": { "type": "integer", "format": "int32" }
+          },
+          {
+            "name": "Notion-Version",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "default": "2026-03-11" },
+            "description": "The Notion API version. The view endpoints require 2025-09-03 or later; this server pins 2026-03-11, the version Notion's own view documentation is written against."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": { "type": "string", "example": "error" },
+                    "status": { "type": "integer", "example": 400 },
+                    "code": { "type": "string" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "deprecated": false,
+        "security": []
+      },
+      "delete": {
+        "summary": "Delete a view query",
+        "description": "Release a cached view query once you have finished paging through it. Optional housekeeping — a query expires by itself after about 15 minutes — but worth doing when queries are run often. It deletes only the cached result set; the view and its pages are untouched.",
+        "operationId": "delete-a-view-query",
+        "tags": ["Views"],
+        "parameters": [
+          {
+            "name": "view_id",
+            "in": "path",
+            "required": true,
+            "description": "Identifier for a Notion view.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "query_id",
+            "in": "path",
+            "required": true,
+            "description": "The `id` returned by Create a view query.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "Notion-Version",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "default": "2026-03-11" },
+            "description": "The Notion API version. The view endpoints require 2025-09-03 or later; this server pins 2026-03-11, the version Notion's own view documentation is written against."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": { "type": "string", "example": "error" },
+                    "status": { "type": "integer", "example": 400 },
+                    "code": { "type": "string" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "deprecated": false,
+        "security": []
+      }
+    },
     "/v1/file_uploads": {
       "post": {
         "summary": "Create a file upload",

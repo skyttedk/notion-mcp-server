@@ -5,13 +5,19 @@ exports[`Notion OpenAPI spec -> MCP tools (snapshot) > generates a stable set of
   "create-a-comment",
   "create-a-data-source",
   "create-a-file-upload",
+  "create-a-view",
+  "create-a-view-query",
   "delete-a-block",
   "delete-a-comment",
+  "delete-a-view",
+  "delete-a-view-query",
   "get-block-children",
   "get-self",
   "get-user",
   "get-users",
+  "get-view-query-results",
   "list-data-source-templates",
+  "list-views",
   "move-page",
   "patch-block-children",
   "patch-page",
@@ -25,11 +31,13 @@ exports[`Notion OpenAPI spec -> MCP tools (snapshot) > generates a stable set of
   "retrieve-a-file-upload",
   "retrieve-a-page",
   "retrieve-a-page-property",
+  "retrieve-a-view",
   "retrieve-page-markdown",
   "send-a-file-upload",
   "update-a-block",
   "update-a-comment",
   "update-a-data-source",
+  "update-a-view",
   "update-page-markdown",
 ]
 `;
@@ -85,6 +93,48 @@ Step 1 of attaching a file to Notion. Reserves an upload and returns an \`id\`. 
     "required": [],
   },
   {
+    "description": "Notion | Create a view
+Create a view over a data source: a table, board, calendar, timeline, gallery, list, form, chart, map or dashboard, with its own filter, sorts and layout. Exactly one of \`database_id\`, \`view_id\` or \`create_database\` must be given — \`database_id\` adds a tab to an existing database, \`view_id\` adds a widget to an existing dashboard, and \`create_database\` puts a linked view of an existing data source on a page. Note that \`database_id\` and \`data_source_id\` are different IDs and both are needed: retrieve the database to find its \`data_sources\` array. \`configuration.type\` must equal the view's \`type\`, and a board view must carry a \`group_by\`.
+Error Responses:
+400: Bad request",
+    "httpMethod": "post",
+    "name": "create-a-view",
+    "properties": [
+      "configuration",
+      "create_database",
+      "data_source_id",
+      "database_id",
+      "filter",
+      "name",
+      "placement",
+      "position",
+      "quick_filters",
+      "sorts",
+      "type",
+      "view_id",
+    ],
+    "required": [
+      "data_source_id",
+      "name",
+      "type",
+    ],
+  },
+  {
+    "description": "Notion | Create a view query
+Run a view's saved filter and sort and get the first page of matching pages back, so you see what a person looking at that view sees without rebuilding its filter logic yourself. The response carries the results plus a \`query_id\`, \`total_count\` and \`has_more\`; use Get view query results with that \`query_id\` to page through the rest. The cached result set expires on its own after about 15 minutes.
+Error Responses:
+400: Bad request",
+    "httpMethod": "post",
+    "name": "create-a-view-query",
+    "properties": [
+      "page_size",
+      "view_id",
+    ],
+    "required": [
+      "view_id",
+    ],
+  },
+  {
     "description": "Notion | Delete a block
 Error Responses:
 400: Bad request",
@@ -110,6 +160,36 @@ Error Responses:
     ],
     "required": [
       "comment_id",
+    ],
+  },
+  {
+    "description": "Notion | Delete a view
+Permanently remove a view from its database. This cannot be undone through the API. A database must keep at least one view, so deleting the last one fails with a validation error — to get rid of the database itself, set \`in_trash\` on the database instead. The response is a partial view object with only \`object\`, \`id\`, \`parent\` and \`type\`, since the view no longer exists to describe.
+Error Responses:
+400: Bad request",
+    "httpMethod": "delete",
+    "name": "delete-a-view",
+    "properties": [
+      "view_id",
+    ],
+    "required": [
+      "view_id",
+    ],
+  },
+  {
+    "description": "Notion | Delete a view query
+Release a cached view query once you have finished paging through it. Optional housekeeping — a query expires by itself after about 15 minutes — but worth doing when queries are run often. It deletes only the cached result set; the view and its pages are untouched.
+Error Responses:
+400: Bad request",
+    "httpMethod": "delete",
+    "name": "delete-a-view-query",
+    "properties": [
+      "query_id",
+      "view_id",
+    ],
+    "required": [
+      "query_id",
+      "view_id",
     ],
   },
   {
@@ -162,6 +242,24 @@ Error Responses:
     "required": [],
   },
   {
+    "description": "Notion | Get view query results
+Fetch a further page from a result set already produced by Create a view query, using the \`query_id\` it returned. Pass the previous response's \`next_cursor\` as \`start_cursor\`. The cached set expires after about 15 minutes, after which the query has to be created again.
+Error Responses:
+400: Bad request",
+    "httpMethod": "get",
+    "name": "get-view-query-results",
+    "properties": [
+      "page_size",
+      "query_id",
+      "start_cursor",
+      "view_id",
+    ],
+    "required": [
+      "query_id",
+      "view_id",
+    ],
+  },
+  {
     "description": "Notion | List templates in a data source
 List available templates for a data source
 Error Responses:
@@ -176,6 +274,21 @@ Error Responses:
     "required": [
       "data_source_id",
     ],
+  },
+  {
+    "description": "Notion | List views
+List the views of a database, or every view that reads a given data source. Pass \`database_id\` for the views shown as tabs on one database, or \`data_source_id\` to also pick up linked views of that data source living on other pages across the workspace. Results only include views the integration can access. Each entry is a reference carrying just \`object\` and \`id\` — call Retrieve a view for a view's filter, sorts and layout.
+Error Responses:
+400: Bad request",
+    "httpMethod": "get",
+    "name": "list-views",
+    "properties": [
+      "data_source_id",
+      "database_id",
+      "page_size",
+      "start_cursor",
+    ],
+    "required": [],
   },
   {
     "description": "Notion | Move a page
@@ -383,6 +496,20 @@ Error Responses:
     ],
   },
   {
+    "description": "Notion | Retrieve a view
+Retrieve one view in full: its name, type, filter, sorts, quick filters and layout configuration. This is the only way to read a view's settings — List views returns bare \`id\` references. Retrieving a dashboard returns its layout, the rows of widgets with their view IDs, widths and row indexes.
+Error Responses:
+400: Bad request",
+    "httpMethod": "get",
+    "name": "retrieve-a-view",
+    "properties": [
+      "view_id",
+    ],
+    "required": [
+      "view_id",
+    ],
+  },
+  {
     "description": "Notion | Retrieve a page as Markdown
 Retrieve the full content of a Notion page rendered as enhanced Markdown. Designed for agentic and developer tools that work natively with Markdown instead of the block JSON returned by Retrieve block children.
 Error Responses:
@@ -462,6 +589,25 @@ Error Responses:
     ],
     "required": [
       "data_source_id",
+    ],
+  },
+  {
+    "description": "Notion | Update a view
+Change a view's name, filter, sorts, quick filters or layout. Every field is optional and anything omitted is left as it was, so a partial update is safe. To remove a setting, send it as \`null\` — \`filter: null\` drops the filter, \`configuration: {"type": "table", "group_by": null}\` ungroups a table. Sending a \`quick_filters\` entry replaces just that one and leaves the rest; setting an entry to \`null\` removes it. \`configuration.type\` must match the view's existing type. Note that re-applying grouping resets \`hide_empty_groups\` to true, so set it explicitly to false in the same call if empty groups must stay visible.
+Error Responses:
+400: Bad request",
+    "httpMethod": "patch",
+    "name": "update-a-view",
+    "properties": [
+      "configuration",
+      "filter",
+      "name",
+      "quick_filters",
+      "sorts",
+      "view_id",
+    ],
+    "required": [
+      "view_id",
     ],
   },
   {

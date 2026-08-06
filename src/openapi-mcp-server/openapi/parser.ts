@@ -214,6 +214,58 @@ export class OpenAPIToMCPConverter {
     }
     return schema
   }
+
+  /**
+   * Fork fix (tool-list size): keep only the `$defs` a schema can actually reach.
+   *
+   * `$defs` used to be the spec's *entire* component collection, copied into
+   * every tool's inputSchema and returnSchema alike — so one shared schema cost
+   * its own size multiplied by the number of operations, whether or not any of
+   * them referenced it. With 11 small components that was already 121 KB of the
+   * `tools/list` payload for 29 tools; adding the Views API's 43 request
+   * schemas would have taken it to ~3 MB, which every client pays on every
+   * connection.
+   *
+   * Walking `$ref`s from the root instead makes the cost proportional to what a
+   * tool uses: the same 29 tools need 5 KB, and the eight view tools fit in the
+   * remaining budget. Traversal is over the *converted* schema, where refs have
+   * already been rewritten to `#/$defs/...`, so it does not depend on how the
+   * OpenAPI-to-JSON-Schema step names things. `seen` also terminates the
+   * recursive schemas (a filter can nest filters), which is why a ref is
+   * recorded before its target is queued.
+   */
+  private reachableDefs(root: IJsonSchema, allDefs: Record<string, IJsonSchema>): Record<string, IJsonSchema> {
+    const seen = new Set<string>()
+    const queue: unknown[] = [root]
+
+    const visit = (node: unknown): void => {
+      if (!node || typeof node !== 'object') return
+      if (Array.isArray(node)) {
+        for (const item of node) visit(item)
+        return
+      }
+      for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+        if (key === '$ref' && typeof value === 'string') {
+          const name = value.replace(/^#\/(?:\$defs|components\/schemas)\//, '')
+          if (!seen.has(name) && allDefs[name]) {
+            seen.add(name)
+            queue.push(allDefs[name])
+          }
+        } else {
+          visit(value)
+        }
+      }
+    }
+
+    while (queue.length > 0) visit(queue.pop())
+
+    const pruned: Record<string, IJsonSchema> = {}
+    // Emit in the spec's own declaration order so output stays stable across runs.
+    for (const name of Object.keys(allDefs)) {
+      if (seen.has(name)) pruned[name] = allDefs[name]!
+    }
+    return pruned
+  }
   private isOperation(method: string, operation: any): operation is OpenAPIV3.OperationObject {
     return ['get', 'post', 'put', 'delete', 'patch'].includes(method.toLowerCase())
   }
@@ -363,6 +415,13 @@ export class OpenAPIToMCPConverter {
     // Extract return type (response schema)
     const returnSchema = this.extractResponseType(operation.responses)
 
+    // Narrow `$defs` to what this operation's own parameters and body reach.
+    // Computed from the populated schema minus `$defs` itself — walking the
+    // full collection would mark every component reachable from every tool and
+    // defeat the pruning.
+    const { $defs: allDefs, ...inputBody } = inputSchema
+    inputSchema.$defs = this.reachableDefs(inputBody as IJsonSchema, (allDefs ?? {}) as Record<string, IJsonSchema>)
+
     // Generate Zod schema from input schema
     try {
       // const zodSchemaStr = jsonSchemaToZod(inputSchema, { module: "cjs" })
@@ -433,7 +492,7 @@ export class OpenAPIToMCPConverter {
 
     if (responseObj.content['application/json']?.schema) {
       const returnSchema = this.convertOpenApiSchemaToJsonSchema(responseObj.content['application/json'].schema, new Set(), false)
-      returnSchema['$defs'] = this.convertComponentsToJsonSchema()
+      returnSchema['$defs'] = this.reachableDefs(returnSchema, this.convertComponentsToJsonSchema())
 
       // Preserve the response description if available and not already set
       if (responseObj.description && !returnSchema.description) {
