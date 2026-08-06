@@ -533,6 +533,7 @@ Step 2: transfer the bytes for an upload created by \`API-create-a-file-upload\`
     "httpMethod": "post",
     "name": "send-a-file-upload",
     "properties": [
+      "content_length",
       "file",
       "file_upload_id",
       "filename",

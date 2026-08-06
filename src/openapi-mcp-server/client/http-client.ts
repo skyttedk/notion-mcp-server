@@ -130,6 +130,62 @@ function decodeBase64Payload(b64: string): Buffer {
   return Buffer.from(compact, 'base64')
 }
 
+/**
+ * The byte length the caller states the payload has, or undefined when they
+ * said nothing.
+ *
+ * This is the only fact that can prove a payload complete. Everything else this
+ * file checks is inference from the bytes that arrived, and inference cannot
+ * distinguish a small file from a big one that lost its tail on the way here.
+ */
+function readDeclaredLength(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === '') return undefined
+  const declared = typeof value === 'number' ? value : Number(String(value).trim())
+  if (!Number.isInteger(declared) || declared < 0) {
+    throw new UploadPayloadError(
+      `content_length must be the payload's size in bytes as a whole number; received ${JSON.stringify(value)}.`,
+    )
+  }
+  return declared
+}
+
+/** Both numbers, so the caller can see at a glance how much went missing. */
+function describeLengthMismatch(actual: number, declared: number): string {
+  const direction = actual < declared ? 'cut short on the way here' : 'longer than declared'
+  return (
+    `The payload is ${direction}: content_length says ${declared} bytes but ${actual} arrived. ` +
+    `Nothing was uploaded — resend the whole file, or correct content_length if that number was wrong.`
+  )
+}
+
+/**
+ * Whether an encoded payload carries its own proof of being whole.
+ *
+ * A base64 encoder pads the final group with `=` whenever the file's length is
+ * not a multiple of three, so terminal padding proves the encoder ran to the
+ * end. Without it the string is either a complete multiple-of-three file or a
+ * fragment cut at a group boundary, and the two are indistinguishable: the
+ * reported incident was a payload cut to exactly 3,316 characters, which is a
+ * whole number of groups, decodes cleanly to 2,487 bytes, and passes every
+ * length rule below.
+ */
+function encodingProvesCompleteness(encoded: string): boolean {
+  return encoded.replace(/\s+/g, '').endsWith('=')
+}
+
+/**
+ * Below this many bytes an unprovable payload is accepted rather than refused.
+ *
+ * Two thirds of files encode with padding and are provable outright; the rest
+ * are not, and refusing all of them would reject a third of every small
+ * attachment — a note, an icon, a snippet — to protect against a cut that
+ * cannot happen to them. Nothing in this path truncates a payload that arrives
+ * whole inside one message: the two observed truncations arrived as 8,751 and
+ * 2,487 bytes, both far above this line. So the demand for proof is made where
+ * the risk is, and a declared content_length remains the answer at any size.
+ */
+const UNPROVABLE_PAYLOAD_LIMIT = 1024
+
 /** Byte signature plus the trailer that marks the format's end-of-file. */
 const CONTAINER_FORMATS: { name: string; magic: number[]; endsWith?: number[]; endMarker?: string }[] = [
   { name: 'PNG', magic: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], endsWith: [0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82] },
@@ -143,35 +199,43 @@ function startsWith(buf: Buffer, bytes: number[]): boolean {
 }
 
 /**
- * Fork guard (silent corruption): describe a file that is recognisably cut
- * short, or null when it looks whole — or when the format is not one we can
- * judge, which is the default for anything without a known signature.
+ * Fork guard (silent corruption): what the bytes themselves say about whether
+ * the file is whole.
  *
  * Notion stores whatever bytes it is given and reports the upload as
- * successful, and the byte-count guard below only compares what we sent with
- * what Notion stored — identical numbers when the payload was already short
- * when it reached us. A 43,627-byte screenshot arrived as its first 8,751
- * bytes and was attached as a broken image with no error anywhere. These
- * formats all declare their own end, so a missing trailer proves the file is
- * incomplete: say so instead of storing the fragment.
+ * successful, and the byte-count guard further below only compares what we sent
+ * with what Notion stored — identical numbers when the payload was already
+ * short when it reached us. A 43,627-byte screenshot arrived as its first 8,751
+ * bytes and was attached as a broken image with no error anywhere. The formats
+ * listed above declare their own end, so a missing trailer proves the file is
+ * incomplete.
+ *
+ * The third verdict matters as much as the other two: for anything without a
+ * known signature there is no opinion to give, and treating that silence as
+ * "looks fine" is what let the second reported incident through. Callers act on
+ * `unknown` by insisting the size be declared instead.
  */
-function describeIncompleteFile(buf: Buffer): string | null {
+type ContainerVerdict = { status: 'complete' } | { status: 'incomplete'; message: string } | { status: 'unknown' }
+
+function judgeContainer(buf: Buffer): ContainerVerdict {
   for (const format of CONTAINER_FORMATS) {
     if (!startsWith(buf, format.magic)) continue
     if (format.endsWith) {
       const tail = buf.subarray(-format.endsWith.length)
       const complete = tail.length === format.endsWith.length && format.endsWith.every((byte, i) => tail[i] === byte)
-      if (complete) return null
+      if (complete) return { status: 'complete' }
     } else if (format.endMarker) {
       // The marker sits at the very end, but may be followed by whitespace.
-      if (buf.subarray(-1024).toString('latin1').includes(format.endMarker)) return null
+      if (buf.subarray(-1024).toString('latin1').includes(format.endMarker)) return { status: 'complete' }
     }
-    return (
-      `The ${format.name} payload is incomplete: ${buf.length} bytes ending without the format's end-of-file marker, ` +
-      `so it was cut short before it reached the server. Nothing was uploaded — send the whole file.`
-    )
+    return {
+      status: 'incomplete',
+      message:
+        `The ${format.name} payload is incomplete: ${buf.length} bytes ending without the format's end-of-file marker, ` +
+        `so it was cut short before it reached the server. Nothing was uploaded — send the whole file.`,
+    }
   }
-  return null
+  return { status: 'unknown' }
 }
 
 /** Whether an error body could have come from Notion's API, which always answers JSON. */
@@ -365,6 +429,16 @@ export class HttpClient {
     let uploadedBytes = 0
     let measurable = true
 
+    // The size the caller says they are sending. Checked against what actually
+    // arrived, ahead of every inference below, because it is the only evidence
+    // that survives a payload being cut before it reached this server.
+    const declaredLength = readDeclaredLength(params.content_length)
+    // With one source the declared size is that buffer's, so the mismatch can be
+    // caught the moment it is decoded; with several it can only mean the total,
+    // which is checked once the loop is done. Nothing is sent either way.
+    const sourceCount = fileParams.reduce((n, p) => n + (Array.isArray(params[p]) ? params[p].length : 1), 0)
+    const singleSource = sourceCount === 1
+
     // Handle file uploads
     for (const param of fileParams) {
       const filePath = params[param]
@@ -383,13 +457,41 @@ export class HttpClient {
           // content_type first, else the type the source itself carries
           // (stripped of parameters like charset). With neither, form-data
           // falls back to guessing from the filename as before.
-          const appendBuffer = (buf: Buffer, sourceType?: string | null) => {
+          const appendBuffer = (buf: Buffer, sourceType?: string | null, encoded?: string) => {
+            // Size first: a declared length settles the question outright, and
+            // it has to be consulted before the format check because a file cut
+            // short can still end with its format's end-of-file marker — by
+            // coincidence for a short trailer, and always for a format whose
+            // end we cannot recognise at all. A trailer proves the last byte is
+            // present, never that none are missing in between.
+            if (declaredLength !== undefined && singleSource && buf.length !== declaredLength) {
+              throw new UploadPayloadError(describeLengthMismatch(buf.length, declaredLength))
+            }
+
             // A part of a multi-part upload is a fragment by design; only a
             // whole-file send can be judged complete.
             if (params.part_number === undefined) {
-              const incomplete = describeIncompleteFile(buf)
-              if (incomplete) {
-                throw new UploadPayloadError(incomplete)
+              const verdict = judgeContainer(buf)
+              if (verdict.status === 'incomplete') {
+                throw new UploadPayloadError(verdict.message)
+              }
+              // Nothing here can vouch for the payload: the encoding carries no
+              // proof it ran to the end, the format is not one whose end we can
+              // recognise, and the caller stated no size. Rather than store a
+              // possible fragment and report success — the failure this guard
+              // exists for — ask for the one fact that would settle it.
+              const unprovable =
+                verdict.status === 'unknown' &&
+                declaredLength === undefined &&
+                encoded !== undefined &&
+                !encodingProvesCompleteness(encoded)
+              if (unprovable && buf.length >= UNPROVABLE_PAYLOAD_LIMIT) {
+                throw new UploadPayloadError(
+                  `Cannot confirm this payload is complete: it decodes to ${buf.length} bytes, its encoding ends without ` +
+                    `padding (so it could equally be a whole file or one cut at a group boundary), and its format is not one ` +
+                    `whose end-of-file marker this server recognises. Send content_length with the source file's size in ` +
+                    `bytes and it will be verified exactly. Nothing was uploaded.`,
+                )
               }
             }
             uploadedBytes += buf.length
@@ -400,7 +502,7 @@ export class HttpClient {
           if (/^data:/i.test(source)) {
             const b64 = source.slice(source.indexOf(',') + 1)
             const mediaType = /^data:([^;,]+)/i.exec(source)?.[1]
-            appendBuffer(decodeBase64Payload(b64), mediaType)
+            appendBuffer(decodeBase64Payload(b64), mediaType, b64)
             return
           }
 
@@ -422,7 +524,7 @@ export class HttpClient {
           // characters, so length cannot be the signal. An existing file on
           // disk still wins, which keeps stdio paths working.
           if (isBareBase64(source) && !existsLocally) {
-            appendBuffer(decodeBase64Payload(source))
+            appendBuffer(decodeBase64Payload(source), undefined, source)
             return
           }
 
@@ -475,6 +577,12 @@ export class HttpClient {
       }
     }
 
+    // Several sources in one request: the declared size can only have meant
+    // their total. Still ahead of the request being made, so nothing is sent.
+    if (declaredLength !== undefined && !singleSource && measurable && uploadedBytes !== declaredLength) {
+      throw new UploadPayloadError(describeLengthMismatch(uploadedBytes, declaredLength))
+    }
+
     // Fork fix (upload hygiene): only genuine body fields belong in the
     // multipart payload. In OpenAPI 3 everything declared under `parameters`
     // lives in the URL or the headers — executeOperation already puts path and
@@ -485,9 +593,11 @@ export class HttpClient {
     const declaredNonBodyParams = new Set(this.declaredParameters(operation).map((param) => param.name))
 
     // Add non-file parameters to form data. `filename` is consumed above as
-    // the file part's metadata, not a form field of its own.
+    // the file part's metadata, and `content_length` as the integrity check
+    // this server performs itself; neither is a form field of its own, and
+    // Notion knows nothing about the latter.
     for (const [key, value] of Object.entries(params)) {
-      if (fileParams.includes(key) || key === 'filename' || declaredNonBodyParams.has(key)) {
+      if (fileParams.includes(key) || key === 'filename' || key === 'content_length' || declaredNonBodyParams.has(key)) {
         continue
       }
       // form-data dereferences the value while building the part header, so an

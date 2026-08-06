@@ -111,6 +111,7 @@ const spec = {
 
 describe('file-upload integrity', () => {
   const received: number[] = []
+  let lastBody = ''
   let server: Server
   let client: HttpClient
 
@@ -119,6 +120,7 @@ describe('file-upload integrity', () => {
     app.use(express.raw({ type: 'multipart/form-data', limit: '50mb' }))
     app.post('/v1/file_uploads/:id/send', (req, res) => {
       const bytes = filePartLength(req.body as Buffer, req.headers['content-type'] as string)
+      lastBody = (req.body as Buffer).toString('latin1')
       received.push(bytes)
       // Notion echoes the size it stored, which matches whatever it was sent.
       res.json({ object: 'file_upload', id: req.params.id, status: 'uploaded', content_length: bytes })
@@ -134,10 +136,11 @@ describe('file-upload integrity', () => {
     server.close()
   })
 
-  const send = (file: string) =>
+  const send = (file: string, extra: Record<string, any> = {}) =>
     client.executeOperation({ ...(spec.paths[SEND_PATH]!.post as any), method: 'post', path: SEND_PATH }, {
       file_upload_id: 'u1',
       file,
+      ...extra,
     })
 
   const png = makePng(320, 110) // ~40 KB, the size that exposed the truncation
@@ -194,11 +197,74 @@ describe('file-upload integrity', () => {
     expect(received).toEqual([])
   })
 
-  // Formats without a self-declared end are none of the guard's business.
+  // A padded encoding proves the encoder ran to the end, so a format we cannot
+  // judge is still fine to upload unannounced.
   it('still uploads a payload of an unrecognised format', async () => {
     received.length = 0
-    const text = Buffer.from('a'.repeat(5000))
+    const text = Buffer.from('a'.repeat(5000)) // 5000 % 3 = 2, so the base64 pads
     await send(text.toString('base64'))
     expect(received).toEqual([text.length])
+  })
+
+  /**
+   * The second reported incident: 3,371 bytes were sent and 2,487 stored, with
+   * success reported. The cut fell on a base64 group boundary, so the length
+   * rules saw a well-formed string; the format could not be judged, so the
+   * end-of-file check had no opinion; and what we sent then matched what Notion
+   * stored, because the payload was already short when it reached us. The
+   * declared size is the only thing that breaks that tie.
+   */
+  describe('a payload cut at a group boundary', () => {
+    const whole = Buffer.from('a'.repeat(3371))
+    // 4-aligned prefix of the encoding: decodes cleanly, to the wrong file.
+    const cut = whole.toString('base64').slice(0, 3316)
+
+    it('decodes to a plausible-looking file that every older guard accepts', () => {
+      expect(cut.length % 4).toBe(0)
+      expect(cut.includes('=')).toBe(false)
+      expect(Buffer.from(cut, 'base64').length).toBe(2487)
+    })
+
+    it('is refused when the source size is declared, and nothing is uploaded', async () => {
+      received.length = 0
+      await expect(send(cut, { content_length: 3371 })).rejects.toThrow(/content_length says 3371 bytes but 2487 arrived/)
+      expect(received).toEqual([])
+    })
+
+    it('is refused even without a declared size, because nothing can vouch for it', async () => {
+      received.length = 0
+      await expect(send(cut)).rejects.toThrow(/Cannot confirm this payload is complete/)
+      expect(received).toEqual([])
+    })
+
+    it('goes through whole when the declared size matches', async () => {
+      received.length = 0
+      await send(whole.toString('base64'), { content_length: 3371 })
+      expect(received).toEqual([3371])
+    })
+  })
+
+  // Size is checked first: a file can end with its format's marker and still be
+  // missing bytes, so a correct-looking PNG must not outvote the stated size.
+  it('refuses a complete-looking PNG whose size contradicts the declaration', async () => {
+    received.length = 0
+    await expect(send(png.toString('base64'), { content_length: png.length + 1 })).rejects.toThrow(/cut short on the way here/)
+    expect(received).toEqual([])
+  })
+
+  it('refuses a size that is not a whole number of bytes', async () => {
+    received.length = 0
+    await expect(send(png.toString('base64'), { content_length: '12.5' })).rejects.toThrow(/whole number/)
+    expect(received).toEqual([])
+  })
+
+  // Notion knows nothing about content_length on the send endpoint: it is this
+  // server's check, so it must not travel with the request.
+  it('keeps the declared size out of the multipart body', async () => {
+    received.length = 0
+    lastBody = ''
+    await send(png.toString('base64'), { content_length: png.length })
+    expect(received).toEqual([png.length])
+    expect(lastBody).not.toContain('content_length')
   })
 })

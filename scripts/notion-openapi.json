@@ -1553,6 +1553,10 @@
                     "format": "binary",
                     "description": "File contents as a data: URI, a bare base64 string, or an http(s) URL to fetch."
                   },
+                  "content_length": {
+                    "type": "integer",
+                    "description": "Size of the source file in bytes, before encoding. Always send it. Encoded contents can be cut short on the way here and still look well-formed, in which case Notion stores the fragment and reports success; this number is compared against what actually arrived and the upload is refused on any mismatch. Without it, a payload whose completeness cannot be established from its own bytes is refused rather than stored."
+                  },
                   "filename": {
                     "type": "string",
                     "description": "Optional name for the multipart part; defaults to the create step's filename."

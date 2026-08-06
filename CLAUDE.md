@@ -107,11 +107,32 @@ schemas rather than prose.
 Two different truncations are guarded, and both were seen in the wild: Notion
 storing fewer bytes than we sent (compared against the response's
 `content_length`), and the *caller* handing us a payload that was already cut
-short. The second one no numeric comparison can catch - the byte counts agree
-because the fragment is all there ever was - so the decoded bytes are checked
-against the file format's own end-of-file marker (PNG `IEND`, JPEG `FFD9`, GIF
-`3B`, PDF `%%EOF`) and against base64 shapes that cannot be complete. Formats
-without a self-declared end are uploaded unchecked.
+short. The second one no comparison against Notion can catch - the byte counts
+agree because the fragment is all there ever was.
+
+**Inference alone cannot settle the second one, so the send tool takes a
+`content_length` of its own** - the source file's size in bytes, checked against
+what actually arrived and refused on any mismatch. It is this server's check,
+never forwarded to Notion, and it is consulted *before* the format check,
+because a file can be missing bytes in the middle and still end with its
+format's end-of-file marker. Agents should always send it; the parameter
+description says so.
+
+The inference is the fallback when they do not, and each rule covers a different
+gap. Decoded bytes are checked against the file format's own end-of-file marker
+(PNG `IEND`, JPEG `FFD9`, GIF `3B`, PDF `%%EOF`), and the encoding against
+base64 shapes that cannot be complete. **What was missing, and cost a second
+incident:** a cut that lands on a base64 group boundary produces a string with a
+whole number of groups that decodes cleanly, so no length rule objects - a
+3,371-byte file arrived as exactly 3,316 characters, stored as 2,487 bytes, and
+was reported as a success. Terminal `=` padding is the tell (an encoder emits it
+whenever the length is not a multiple of three, so a padded string ran to the
+end), and where there is neither padding, nor a format whose end we recognise,
+nor a declared `content_length`, nothing can vouch for the payload and it is
+refused rather than stored. That refusal applies from 1 KB up: two thirds of
+files are padded and provable anyway, and refusing every small unpadded one
+would reject a third of all notes and icons to guard against a cut that does not
+happen inside a single message.
 
 The guard tests live in `src/openapi-mcp-server/client/__tests__/comment-attachments.test.ts`,
 `update-comment.test.ts`,
