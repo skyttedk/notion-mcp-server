@@ -25,6 +25,14 @@ export class OpenAPIToMCPConverter {
   private schemaCache: Record<string, IJsonSchema> = {}
   private nameCounter: number = 0
 
+  /**
+   * How many times a `$ref` was cut short because it was already being
+   * expanded higher up the tree. See the cache note in
+   * `convertOpenApiSchemaToJsonSchema`: a subtree converted while such a cut
+   * was made is not the full schema, so it must not be cached.
+   */
+  private cycleCuts: number = 0
+
   constructor(private openApiSpec: OpenAPIV3.Document | OpenAPIV3_1.Document) {}
 
   /**
@@ -36,6 +44,7 @@ export class OpenAPIToMCPConverter {
       return null
     }
     if (resolvedRefs.has(ref)) {
+      this.cycleCuts += 1
       return null
     }
 
@@ -70,17 +79,29 @@ export class OpenAPIToMCPConverter {
         console.error(`Attempting to resolve ref ${ref} not found in components collection.`)
         // deliberate fall through
       }
-      // Create base schema with $ref and description if present
-      const refSchema: IJsonSchema = { $ref: ref }
-      if ('description' in schema && schema.description) {
-        refSchema.description = schema.description as string
+      // Fork fix (cache correctness): the cache key is the ref *and the mode*.
+      //
+      // Converting a ref does not depend on the ref alone. With `resolveRefs`
+      // the target is inlined and its own refs are inlined with it; without it
+      // the nested refs stay as `#/$defs/...` pointers. The two modes therefore
+      // produce different schemas for the same ref, and a key of just the ref
+      // handed whichever result was computed first back to the other caller.
+      // Nothing hits it today only because every call site outside this method
+      // passes `resolveRefs: false` and every Notion ref lives under
+      // `#/components/schemas/`, which returns above before reaching the cache.
+      const cacheKey = `${resolveRefs ? 'inline' : 'ref'}:${ref}`
+      const cached = this.schemaCache[cacheKey]
+      if (cached) {
+        return cached
       }
 
-      // If already cached, return immediately with description
-      if (this.schemaCache[ref]) {
-        return this.schemaCache[ref]
-      }
-
+      // `resolvedRefs` is the third input, and it cannot go in the key: it is
+      // the set of refs already being expanded above this one, used to cut
+      // recursion. A subtree converted while such a cut was made is a
+      // *truncated* schema — correct in that position, wrong for a caller that
+      // starts from a clean set — so results built over a cut are not cached.
+      // Comparing the cut counter before and after is what tells the two apart.
+      const cutsBefore = this.cycleCuts
       const resolved = this.internalResolveRef(ref, resolvedRefs)
       if (!resolved) {
         // TODO: need extensive tests for this and we definitely need to handle the case of self references
@@ -91,7 +112,9 @@ export class OpenAPIToMCPConverter {
         }
       } else {
         const converted = this.convertOpenApiSchemaToJsonSchema(resolved, resolvedRefs, resolveRefs)
-        this.schemaCache[ref] = converted
+        if (this.cycleCuts === cutsBefore) {
+          this.schemaCache[cacheKey] = converted
+        }
 
         return converted
       }
@@ -398,6 +421,24 @@ export class OpenAPIToMCPConverter {
     // other silently dropped everything written in `description`, so that text
     // never reached an agent and maintainers wrote instructions into the void.
     let description = [operation.summary, operation.description].filter(Boolean).join('\n')
+
+    // Extract return type (response schema)
+    const returnSchema = this.extractResponseType(operation.responses)
+
+    // Fork fix (undocumented success shape): say what a *successful* call
+    // returns, not only how it can fail. Upstream put the 4xx/5xx entries in
+    // the description and stopped there, and `returnSchema` never reaches the
+    // client — `MCPProxy` sends name, description and inputSchema only — so an
+    // agent had to discover the result shape by calling the tool and looking.
+    // Rendering it into the description is what actually gets it in front of
+    // the caller, and costs no change to the call contract (declaring an MCP
+    // `outputSchema` would oblige every response to carry matching
+    // `structuredContent`, which this proxy does not produce).
+    const returnShape = this.describeReturnShape(returnSchema)
+    if (returnShape) {
+      description += '\nReturns:\n' + returnShape
+    }
+
     if (operation.responses) {
       const errorResponses = Object.entries(operation.responses)
         .filter(([code]) => code.startsWith('4') || code.startsWith('5'))
@@ -411,9 +452,6 @@ export class OpenAPIToMCPConverter {
         description += '\nError Responses:\n' + errorResponses.join('\n')
       }
     }
-
-    // Extract return type (response schema)
-    const returnSchema = this.extractResponseType(operation.responses)
 
     // Narrow `$defs` to what this operation's own parameters and body reach.
     // Computed from the populated schema minus `$defs` itself — walking the
@@ -482,6 +520,115 @@ export class OpenAPIToMCPConverter {
     return schema
   }
 
+  /**
+   * Render a successful response's own top-level fields as one short block for
+   * the tool description.
+   *
+   * Deliberately shallow: the point is to tell a caller which keys come back
+   * and roughly what is in them (`results: array of object`), not to reprint
+   * the schema — the whole tool list is served on every connection, so a full
+   * dump would cost more than it teaches. Operations whose spec still declares
+   * the bare `{"type": "object"}` placeholder have no fields to list and get
+   * no section at all, rather than a line that says nothing.
+   */
+  private describeReturnShape(schema: IJsonSchema | null): string | null {
+    if (!schema) return null
+
+    const defs = (schema.$defs ?? {}) as Record<string, IJsonSchema>
+    const root = this.resolveDefRef(schema, defs)
+    const properties = root.properties
+    if (!properties || Object.keys(properties).length === 0) return null
+
+    const fields = Object.entries(properties)
+      .map(([name, propSchema]) => `${name}: ${this.shapeTypeName(propSchema as IJsonSchema, defs)}`)
+      .join(', ')
+
+    // The response's own description is worth printing only when someone wrote
+    // one. Most of the spec says "Successful response", or repeats the status
+    // code, which would put a line of nothing above every field list.
+    const lead = root.description ?? schema.description
+    const written = lead && !/^(\d{3}|successful response|ok)$/i.test(lead.trim()) ? lead : null
+    return written ? `${written}\nFields: ${fields}` : `Fields: ${fields}`
+  }
+
+  /** Follow a single `#/$defs/...` pointer into the schema's own `$defs`. */
+  private resolveDefRef(schema: IJsonSchema, defs: Record<string, IJsonSchema>): IJsonSchema {
+    const ref = (schema as { $ref?: string }).$ref
+    if (!ref) return schema
+    return defs[ref.replace(/^#\/(?:\$defs|components\/schemas)\//, '')] ?? schema
+  }
+
+  /** Name a field's type for `describeReturnShape`. `depth` stops recursive schemas. */
+  private shapeTypeName(schema: IJsonSchema, defs: Record<string, IJsonSchema>, depth: number = 0): string {
+    const resolved = depth < 3 ? this.resolveDefRef(schema, defs) : schema
+    if (resolved.type === 'array') {
+      const items = resolved.items
+      if (items && !Array.isArray(items) && depth < 3) {
+        return `array of ${this.shapeTypeName(items as IJsonSchema, defs, depth + 1)}`
+      }
+      return 'array'
+    }
+    if (typeof resolved.type === 'string') return resolved.type
+    if (Array.isArray(resolved.type)) return resolved.type.join('|')
+    return 'any'
+  }
+
+  /**
+   * Fork fix (undocumented success shape): derive a response schema from the
+   * spec's own success *example* when it declares no schema.
+   *
+   * Three of the comment operations document their result only as an example.
+   * That example is a real Notion response, so its top-level keys and value
+   * types are the shape — recovering them is still reading the spec's response
+   * definition, not inventing one, and it beats telling the caller nothing.
+   * Only the top level is inferred: an example shows one instance, so deeper
+   * detail would generalise further than the evidence supports.
+   */
+  private schemaFromExample(example: Record<string, unknown>): IJsonSchema {
+    const properties: Record<string, IJsonSchema> = {}
+    for (const [name, value] of Object.entries(example)) {
+      properties[name] = this.exampleValueSchema(value)
+    }
+    return { type: 'object', properties, additionalProperties: true }
+  }
+
+  private exampleValueSchema(value: unknown): IJsonSchema {
+    if (Array.isArray(value)) {
+      const first = value[0]
+      return { type: 'array', items: first === undefined ? {} : this.exampleValueSchema(first) }
+    }
+    // `null` in an example says the field is nullable, not what it holds when
+    // set — so it is left untyped rather than guessed at.
+    if (value === null) return { description: 'null in the example; nullable' }
+    switch (typeof value) {
+      case 'string':
+        return { type: 'string' }
+      case 'number':
+        return { type: Number.isInteger(value) ? 'integer' : 'number' }
+      case 'boolean':
+        return { type: 'boolean' }
+      case 'object':
+        return { type: 'object', additionalProperties: true }
+      default:
+        return {}
+    }
+  }
+
+  /** The first `examples` entry's value, or the singular `example`, if either is an object. */
+  private firstResponseExample(content: OpenAPIV3.MediaTypeObject): Record<string, unknown> | null {
+    const candidates: unknown[] = []
+    for (const entry of Object.values(content.examples ?? {})) {
+      candidates.push((entry as OpenAPIV3.ExampleObject)?.value)
+    }
+    candidates.push(content.example)
+    for (const candidate of candidates) {
+      if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+        return candidate as Record<string, unknown>
+      }
+    }
+    return null
+  }
+
   private extractResponseType(responses: OpenAPIV3.ResponsesObject | undefined): IJsonSchema | null {
     // Look for a success response
     const successResponse = responses?.['200'] || responses?.['201'] || responses?.['202'] || responses?.['204']
@@ -490,8 +637,9 @@ export class OpenAPIToMCPConverter {
     const responseObj = this.resolveResponse(successResponse)
     if (!responseObj || !responseObj.content) return null
 
-    if (responseObj.content['application/json']?.schema) {
-      const returnSchema = this.convertOpenApiSchemaToJsonSchema(responseObj.content['application/json'].schema, new Set(), false)
+    const jsonContent = responseObj.content['application/json']
+    if (jsonContent?.schema) {
+      const returnSchema = this.convertOpenApiSchemaToJsonSchema(jsonContent.schema, new Set(), false)
       returnSchema['$defs'] = this.reachableDefs(returnSchema, this.convertComponentsToJsonSchema())
 
       // Preserve the response description if available and not already set
@@ -499,6 +647,18 @@ export class OpenAPIToMCPConverter {
         returnSchema.description = responseObj.description
       }
 
+      return returnSchema
+    }
+
+    // No schema, but the spec may still carry a success example — see
+    // `schemaFromExample`.
+    const example = jsonContent ? this.firstResponseExample(jsonContent) : null
+    if (example) {
+      const returnSchema = this.schemaFromExample(example)
+      // A description that is just the status code ("200") says nothing.
+      if (responseObj.description && !/^\d{3}$/.test(responseObj.description.trim())) {
+        returnSchema.description = responseObj.description
+      }
       return returnSchema
     }
 

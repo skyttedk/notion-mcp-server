@@ -117,6 +117,52 @@ behaviour, including that pruning never leaves a dangling `$ref`.
 Watch for this when writing spec tests: an operation with no parameters and no
 request body now gets `$defs: {}`, not the whole component collection.
 
+### Tools say what a successful call returns
+
+A generated description used to document only how a call can *fail*. The
+`Error Responses:` block was there, nothing described a success, and
+`returnSchema` - which the converter has always computed - never leaves the
+server, because `MCPProxy` sends a tool's name, description and inputSchema
+only. So an agent learned the shape of a result by calling the tool and reading
+what came back, and the bundled spec did not know it either: 33 of 37
+operations declared their 200 as a bare `{"type": "object"}`.
+
+Both halves are fixed. The spec carries **response component schemas**
+(`pageObjectResponse`, `blockObjectResponse`, `paginatedListResponse`,
+`dataSourceObjectResponse`, `databaseObjectResponse`,
+`fileUploadObjectResponse`) referenced from the 18 most-used operations, with
+the fields read off live Notion responses rather than guessed. The converter
+renders them into the description as a `Returns:` section - one line naming the
+top-level fields and their types - which is the part that actually reaches the
+caller. Three comment operations declare no schema at all and only carry an
+*example*; that example is a real response, so its top-level keys are inferred
+from it (top level only - one instance is not evidence for anything deeper).
+
+**Why documentation and not an MCP `outputSchema`:** declaring one obliges every
+response to carry matching `structuredContent`, and this proxy returns the
+Notion payload as text. Adding the field alone would make a validating client
+reject every call. Cost of the section: descriptions grew ~7.6 KB across the 37
+tools; an operation still on the placeholder gets no section rather than a line
+naming no fields. Pinned by `parser-response-shape.test.ts`.
+
+### The resolved-schema cache is keyed on the mode, not just the ref
+
+`convertOpenApiSchemaToJsonSchema` memoises each resolved `$ref`, and the key
+used to be the ref string alone - while the result also depends on
+`resolveRefs` (inline the target, or leave a `#/$defs/...` pointer) and on
+`resolvedRefs` (the set of refs already open, used to cut recursion). So the
+first caller decided the schema for every later one, in whichever mode it
+happened to want, and a schema *truncated* to break a cycle was cached and
+handed to callers starting from a clean set.
+
+The mode is now part of the key, and a conversion that made a cut is not cached
+at all (`cycleCuts` counts them). Nothing hit either case: every call site
+outside the converter passes `resolveRefs: false`, and every Notion ref lives
+under `#/components/schemas/`, which returns before the cache is consulted -
+only a ref elsewhere (a Swagger-style `#/definitions/...`) falls through to it.
+`parser-schema-cache.test.ts` exercises both on that path. The dead `refSchema`
+that upstream built beside the lookup and never read is gone with it.
+
 **Both spec fields reach the agent.** Upstream built a tool's description from
 `summary || description`, and every Notion operation has a `summary` - so every
 word written in `description` was dropped before any agent saw it, including the

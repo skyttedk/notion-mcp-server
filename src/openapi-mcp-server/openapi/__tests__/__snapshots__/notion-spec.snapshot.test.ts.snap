@@ -47,6 +47,8 @@ exports[`Notion OpenAPI spec -> MCP tools (snapshot) > generates stable tool def
   {
     "description": "Notion | Create comment
 Creates a comment in a page or existing discussion thread.
+Returns:
+Fields: object: string, id: string, parent: object, discussion_id: string, created_time: string, last_edited_time: string, created_by: object, rich_text: array of object
 Error Responses:
 400: Bad request",
     "httpMethod": "post",
@@ -65,6 +67,9 @@ Error Responses:
   {
     "description": "Notion | Create a data source
 Create a new data source (database)
+Returns:
+A data source object — the column schema behind a database. Rows are pages; query them with API-query-data-source.
+Fields: object: string, id: string, title: array of object, description: array of object, properties: object, parent: object, database_parent: object, created_time: string, last_edited_time: string, created_by: object, last_edited_by: object, icon: object, cover: object, is_inline: boolean, url: string, public_url: string, archived: boolean, in_trash: boolean, request_id: string
 Error Responses:
 400: Bad request",
     "httpMethod": "post",
@@ -81,7 +86,10 @@ Error Responses:
   },
   {
     "description": "Notion | Create a file upload
-Step 1 of attaching a file to Notion. Reserves an upload and returns an \`id\`. Then call \`API-send-a-file-upload\` with that id to transfer the bytes, and finally reference it from a block or property as \`{"type": "file_upload", "file_upload": {"id": "<id>"}}\`. Single-part uploads are limited to 20MB. An upload must be attached within one hour or it expires.",
+Step 1 of attaching a file to Notion. Reserves an upload and returns an \`id\`. Then call \`API-send-a-file-upload\` with that id to transfer the bytes, and finally reference it from a block or property as \`{"type": "file_upload", "file_upload": {"id": "<id>"}}\`. Single-part uploads are limited to 20MB. An upload must be attached within one hour or it expires.
+Returns:
+A file upload object. It is \`pending\` until the bytes arrive and \`uploaded\` afterwards, and it expires at \`expiry_time\` (one hour) unless it is attached to a block, page property or comment before then.
+Fields: object: string, id: string, status: string, filename: string, content_type: string, content_length: integer, upload_url: string, expiry_time: string, created_time: string, last_edited_time: string, created_by: object, archived: boolean, in_trash: boolean, request_id: string",
     "httpMethod": "post",
     "name": "create-a-file-upload",
     "properties": [
@@ -136,6 +144,9 @@ Error Responses:
   },
   {
     "description": "Notion | Delete a block
+Returns:
+A block object. Its content sits under a key named by its own \`type\` — a paragraph carries \`paragraph\`, a heading \`heading_1\`.
+Fields: object: string, id: string, parent: object, type: string, has_children: boolean, created_time: string, last_edited_time: string, created_by: object, last_edited_by: object, archived: boolean, in_trash: boolean, request_id: string
 Error Responses:
 400: Bad request",
     "httpMethod": "delete",
@@ -194,6 +205,9 @@ Error Responses:
   },
   {
     "description": "Notion | Retrieve block children
+Returns:
+A paginated list. While \`has_more\` is true, pass \`next_cursor\` back as \`start_cursor\` to get the following page.
+Fields: object: string, results: array of object, next_cursor: string, has_more: boolean, type: string, request_id: string
 Error Responses:
 400: Bad request",
     "httpMethod": "get",
@@ -209,6 +223,8 @@ Error Responses:
   },
   {
     "description": "Notion | Retrieve your token's bot user
+Returns:
+Fields: object: string, id: string, name: string, avatar_url: any, type: string, bot: object
 Error Responses:
 400: Bad request",
     "httpMethod": "get",
@@ -293,6 +309,9 @@ Error Responses:
   {
     "description": "Notion | Move a page
 Move a page to a different parent location
+Returns:
+A page object.
+Fields: object: string, id: string, created_time: string, last_edited_time: string, created_by: object, last_edited_by: object, cover: object, icon: object, parent: object, properties: object, url: string, public_url: string, archived: boolean, is_archived: boolean, in_trash: boolean, is_locked: boolean, request_id: string
 Error Responses:
 400: Bad request",
     "httpMethod": "post",
@@ -308,6 +327,9 @@ Error Responses:
   },
   {
     "description": "Notion | Append block children
+Returns:
+A paginated list. While \`has_more\` is true, pass \`next_cursor\` back as \`start_cursor\` to get the following page.
+Fields: object: string, results: array of object, next_cursor: string, has_more: boolean, type: string, request_id: string
 Error Responses:
 400: Bad request",
     "httpMethod": "patch",
@@ -324,6 +346,9 @@ Error Responses:
   },
   {
     "description": "Notion | Update page properties
+Returns:
+A page object.
+Fields: object: string, id: string, created_time: string, last_edited_time: string, created_by: object, last_edited_by: object, cover: object, icon: object, parent: object, properties: object, url: string, public_url: string, archived: boolean, is_archived: boolean, in_trash: boolean, is_locked: boolean, request_id: string
 Error Responses:
 400: Bad request",
     "httpMethod": "patch",
@@ -342,6 +367,9 @@ Error Responses:
   },
   {
     "description": "Notion | Create a page
+Returns:
+A page object.
+Fields: object: string, id: string, created_time: string, last_edited_time: string, created_by: object, last_edited_by: object, cover: object, icon: object, parent: object, properties: object, url: string, public_url: string, archived: boolean, is_archived: boolean, in_trash: boolean, is_locked: boolean, request_id: string
 Error Responses:
 400: Bad request",
     "httpMethod": "post",
@@ -361,6 +389,9 @@ Error Responses:
   },
   {
     "description": "Notion | Search by title
+Returns:
+A paginated list. While \`has_more\` is true, pass \`next_cursor\` back as \`start_cursor\` to get the following page.
+Fields: object: string, results: array of object, next_cursor: string, has_more: boolean, type: string, request_id: string
 Error Responses:
 400: Bad request",
     "httpMethod": "post",
@@ -377,6 +408,9 @@ Error Responses:
   {
     "description": "Notion | Query a data source
 Query a data source (database) using filters and sorts
+Returns:
+A paginated list. While \`has_more\` is true, pass \`next_cursor\` back as \`start_cursor\` to get the following page.
+Fields: object: string, results: array of object, next_cursor: string, has_more: boolean, type: string, request_id: string
 Error Responses:
 400: Bad request",
     "httpMethod": "post",
@@ -397,6 +431,9 @@ Error Responses:
   },
   {
     "description": "Notion | Retrieve a block
+Returns:
+A block object. Its content sits under a key named by its own \`type\` — a paragraph carries \`paragraph\`, a heading \`heading_1\`.
+Fields: object: string, id: string, parent: object, type: string, has_children: boolean, created_time: string, last_edited_time: string, created_by: object, last_edited_by: object, archived: boolean, in_trash: boolean, request_id: string
 Error Responses:
 400: Bad request",
     "httpMethod": "get",
@@ -411,6 +448,8 @@ Error Responses:
   {
     "description": "Notion | Retrieve comments
 Retrieves a list of un-resolved [Comment objects](ref:comment-object) from a page or block.
+Returns:
+Fields: object: string, results: array of object, next_cursor: any, has_more: boolean, type: string, comment: object
 Error Responses:
 400: Bad request",
     "httpMethod": "get",
@@ -427,6 +466,9 @@ Error Responses:
   {
     "description": "Notion | Retrieve a data source
 Retrieve metadata and schema for a data source
+Returns:
+A data source object — the column schema behind a database. Rows are pages; query them with API-query-data-source.
+Fields: object: string, id: string, title: array of object, description: array of object, properties: object, parent: object, database_parent: object, created_time: string, last_edited_time: string, created_by: object, last_edited_by: object, icon: object, cover: object, is_inline: boolean, url: string, public_url: string, archived: boolean, in_trash: boolean, request_id: string
 Error Responses:
 400: Bad request",
     "httpMethod": "get",
@@ -441,6 +483,9 @@ Error Responses:
   {
     "description": "Notion | Retrieve a database
 Retrieves a database object using the ID specified. Returns database metadata including the list of data source IDs contained in the database.
+Returns:
+A database object. It holds presentation and the list of data sources; the columns live on the data source, not here.
+Fields: object: string, id: string, title: array of object, description: array of object, data_sources: array of object, parent: object, created_time: string, last_edited_time: string, icon: object, cover: object, is_inline: boolean, is_locked: boolean, url: string, public_url: string, archived: boolean, in_trash: boolean, request_id: string
 Error Responses:
 400: Bad request",
     "httpMethod": "get",
@@ -454,7 +499,10 @@ Error Responses:
   },
   {
     "description": "Notion | Retrieve a file upload
-Check the status of a file upload ('pending', 'uploaded', 'expired', 'failed').",
+Check the status of a file upload ('pending', 'uploaded', 'expired', 'failed').
+Returns:
+A file upload object. It is \`pending\` until the bytes arrive and \`uploaded\` afterwards, and it expires at \`expiry_time\` (one hour) unless it is attached to a block, page property or comment before then.
+Fields: object: string, id: string, status: string, filename: string, content_type: string, content_length: integer, upload_url: string, expiry_time: string, created_time: string, last_edited_time: string, created_by: object, archived: boolean, in_trash: boolean, request_id: string",
     "httpMethod": "get",
     "name": "retrieve-a-file-upload",
     "properties": [
@@ -466,6 +514,9 @@ Check the status of a file upload ('pending', 'uploaded', 'expired', 'failed')."
   },
   {
     "description": "Notion | Retrieve a page
+Returns:
+A page object.
+Fields: object: string, id: string, created_time: string, last_edited_time: string, created_by: object, last_edited_by: object, cover: object, icon: object, parent: object, properties: object, url: string, public_url: string, archived: boolean, is_archived: boolean, in_trash: boolean, is_locked: boolean, request_id: string
 Error Responses:
 400: Bad request",
     "httpMethod": "get",
@@ -512,6 +563,8 @@ Error Responses:
   {
     "description": "Notion | Retrieve a page as Markdown
 Retrieve the full content of a Notion page rendered as enhanced Markdown. Designed for agentic and developer tools that work natively with Markdown instead of the block JSON returned by Retrieve block children.
+Returns:
+Fields: object: string, id: string, markdown: string, truncated: boolean, unknown_block_ids: array of string
 Error Responses:
 400: Bad request
 403: The integration lacks the read/update content capability required for this page.
@@ -529,7 +582,10 @@ Error Responses:
   },
   {
     "description": "Notion | Send a file upload
-Step 2: transfer the bytes for an upload created by \`API-create-a-file-upload\`. Because this server runs remotely and shares no filesystem with the caller, the \`file\` parameter accepts a data: URI, a bare base64 string, or an http(s) URL the server can fetch — a local path only works when running over stdio. Whichever form is used, the whole file travels in this one call as a single unbroken payload: contents produced in pieces must be joined before they are sent, and \`content_length\` is what proves none went missing.",
+Step 2: transfer the bytes for an upload created by \`API-create-a-file-upload\`. Because this server runs remotely and shares no filesystem with the caller, the \`file\` parameter accepts a data: URI, a bare base64 string, or an http(s) URL the server can fetch — a local path only works when running over stdio. Whichever form is used, the whole file travels in this one call as a single unbroken payload: contents produced in pieces must be joined before they are sent, and \`content_length\` is what proves none went missing.
+Returns:
+A file upload object. It is \`pending\` until the bytes arrive and \`uploaded\` afterwards, and it expires at \`expiry_time\` (one hour) unless it is attached to a block, page property or comment before then.
+Fields: object: string, id: string, status: string, filename: string, content_type: string, content_length: integer, upload_url: string, expiry_time: string, created_time: string, last_edited_time: string, created_by: object, archived: boolean, in_trash: boolean, request_id: string",
     "httpMethod": "post",
     "name": "send-a-file-upload",
     "properties": [
@@ -546,6 +602,9 @@ Step 2: transfer the bytes for an upload created by \`API-create-a-file-upload\`
   {
     "description": "Notion | Correct the text of a block that is already on a page. Pass the one property named after the block's own type — \`paragraph\`, \`bulleted_list_item\`, \`to_do\`, \`heading_1\` and so on — carrying the new \`rich_text\`. The new \`rich_text\` replaces the block's existing text entirely, so send the whole corrected line and not just the changed part. Notion only lets an existing block's text (and \`checked\`, on a \`to_do\`) be updated; a block cannot be turned into another type this way. Editing in place keeps the block's id, its position on the page and any comments anchored to it — appending a corrected copy and archiving the old one does not.
 Send exactly one block-type property. It goes at the top level of the request body, beside \`archived\`, in the same shape API-patch-block-children uses for a new block: \`{"paragraph": {"rich_text": [{"text": {"content": "…"}}]}}\`. There is no wrapper object around it — an earlier version of this spec had one, and Notion answered every such call with a validation error naming each block type as undefined.
+Returns:
+A block object. Its content sits under a key named by its own \`type\` — a paragraph carries \`paragraph\`, a heading \`heading_1\`.
+Fields: object: string, id: string, parent: object, type: string, has_children: boolean, created_time: string, last_edited_time: string, created_by: object, last_edited_by: object, archived: boolean, in_trash: boolean, request_id: string
 Error Responses:
 400: Bad request",
     "httpMethod": "patch",
@@ -589,6 +648,9 @@ Error Responses:
   {
     "description": "Notion | Update a data source
 Update properties of a data source
+Returns:
+A data source object — the column schema behind a database. Rows are pages; query them with API-query-data-source.
+Fields: object: string, id: string, title: array of object, description: array of object, properties: object, parent: object, database_parent: object, created_time: string, last_edited_time: string, created_by: object, last_edited_by: object, icon: object, cover: object, is_inline: boolean, url: string, public_url: string, archived: boolean, in_trash: boolean, request_id: string
 Error Responses:
 400: Bad request",
     "httpMethod": "patch",
@@ -625,6 +687,8 @@ Error Responses:
   {
     "description": "Notion | Update a page's content as Markdown
 Update the content of a Notion page using enhanced Markdown. Prefer \`replace_content\` to overwrite the whole page or \`update_content\` for targeted find-and-replace edits.
+Returns:
+Fields: object: string, id: string, markdown: string, truncated: boolean, unknown_block_ids: array of string
 Error Responses:
 400: Bad request
 403: The integration lacks the read/update content capability required for this page.
