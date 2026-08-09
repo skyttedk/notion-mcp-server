@@ -55,6 +55,24 @@ function makePng(width: number, height: number): Buffer {
   ])
 }
 
+/**
+ * Build a minimal but structurally real WebP: 'RIFF', the size of everything
+ * after that field, 'WEBP', then a single chunk of `payload` bytes. The size
+ * field is what the completeness check reads, so it is written the way an
+ * encoder writes it rather than asserted separately.
+ */
+function makeWebp(payload: number): Buffer {
+  const body = Buffer.alloc(8 + payload) // 'VP8 ' + chunk length + chunk data
+  body.write('VP8 ', 0, 'latin1')
+  body.writeUInt32LE(payload, 4)
+  for (let i = 0; i < payload; i++) body[8 + i] = i & 0xff
+  const head = Buffer.alloc(12)
+  head.write('RIFF', 0, 'latin1')
+  head.writeUInt32LE(4 + body.length, 4) // counts 'WEBP' plus the chunks
+  head.write('WEBP', 8, 'latin1')
+  return Buffer.concat([head, body])
+}
+
 let CRC_TABLE: number[] | null = null
 function crc32(buf: Buffer): number {
   if (!CRC_TABLE) {
@@ -204,6 +222,61 @@ describe('file-upload integrity', () => {
     const text = Buffer.from('a'.repeat(5000)) // 5000 % 3 = 2, so the base64 pads
     await send(text.toString('base64'))
     expect(received).toEqual([text.length])
+  })
+
+  /**
+   * WebP has no end-of-file trailer, so the trailer check can say nothing about
+   * it — and a screenshot saved as WebP (what several tools and browsers now
+   * default to) used to reach the unprovable-payload rule instead, where it was
+   * either refused for lack of a declared size or, under the size limit, waved
+   * through. Its RIFF header states the file's own length, so it can be settled
+   * exactly with nothing asked of the caller.
+   */
+  describe('WebP, whose header states its own length', () => {
+    // 4,020 bytes: over the unprovable-payload limit, and a multiple of three,
+    // so its base64 carries no padding either — nothing but the header's own
+    // length can vouch for it.
+    const webp = makeWebp(4000)
+
+    it('is the shape the check has to settle on its own', () => {
+      expect(webp.length).toBe(4020)
+      expect(webp.length).toBeGreaterThan(1024)
+      expect(webp.toString('base64').includes('=')).toBe(false)
+    })
+
+    it('goes through whole with no declared size', async () => {
+      received.length = 0
+      await send(webp.toString('base64'))
+      expect(received).toEqual([webp.length])
+    })
+
+    it('is refused when cut short, naming the declared and the arrived size', async () => {
+      received.length = 0
+      const cut = webp.subarray(0, 2000)
+      await expect(send(cut.toString('base64'))).rejects.toThrow(
+        /WebP payload is incomplete: its header declares a 4020-byte file but 2000 bytes arrived/,
+      )
+      expect(received).toEqual([])
+    })
+
+    // Eight bytes of RIFF header: too little to tell a WebP from a WAV or an
+    // AVI, so the check must hold its tongue rather than read the size field of
+    // a format it has not identified.
+    it('gives no verdict on a prefix too short to identify', async () => {
+      received.length = 0
+      const prefix = webp.subarray(0, 8)
+      await send(prefix.toString('base64'))
+      expect(received).toEqual([prefix.length])
+    })
+
+    // Same leading magic, different container: its size field must not be read
+    // as a WebP's.
+    it('leaves other RIFF containers alone', async () => {
+      received.length = 0
+      const wav = Buffer.concat([webp.subarray(0, 8), Buffer.from('WAVE', 'latin1'), webp.subarray(12)])
+      await expect(send(wav.subarray(0, 2000).toString('base64'), { content_length: 2000 })).resolves.toBeTruthy()
+      expect(received).toEqual([2000])
+    })
   })
 
   /**
