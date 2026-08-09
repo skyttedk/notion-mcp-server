@@ -117,13 +117,42 @@ function describeSource(source: string): string {
 }
 
 /**
+ * The first character that belongs to neither alphabet nor to the padding.
+ * Whitespace never reaches this: it is stripped beforehand, deliberately, since
+ * encoders wrap their output and a newline shifts nothing.
+ *
+ * `=` is excluded here so a misplaced one keeps its own, more specific
+ * diagnosis below rather than being reported as a foreign character.
+ */
+const NON_BASE64_CHAR = /[^A-Za-z0-9+/\-_=]/
+
+/**
+ * One character, rendered for an error message. Printable ASCII is shown as
+ * itself as well as by code point, because the offender is typically invisible
+ * or indistinguishable from a legitimate one — a non-breaking hyphen, a smart
+ * quote, a stray NUL — and quoting it alone would read as nonsense.
+ */
+function describeCharAt(text: string, index: number): string {
+  const code = text.codePointAt(index) ?? 0
+  const hex = `U+${code.toString(16).toUpperCase().padStart(4, '0')}`
+  return code > 0x20 && code < 0x7f ? `'${String.fromCodePoint(code)}' (${hex})` : hex
+}
+
+/**
  * Decode inline base64, refusing input that cannot be a complete payload.
  *
  * Node's base64 decoder is deliberately forgiving: it skips characters outside
  * the alphabet and stops dead at the first `=`, so a payload that lost its tail
- * in transit decodes to a short buffer instead of failing. Two shapes are
- * provable truncation and are rejected here rather than uploaded:
+ * in transit decodes to a short buffer instead of failing. Three shapes are
+ * provable corruption and are rejected here rather than uploaded:
  *
+ *  - a character outside both alphabets. Skipping it does not merely drop that
+ *    character: it pulls every following character back into the previous
+ *    4-character group, so from that point on the decoded bytes are re-cut
+ *    across the wrong boundaries and the file is garbage — at a length within
+ *    a byte of correct, which is why nothing downstream notices. A declared
+ *    content_length only catches this when the caller states the true source
+ *    size; state one derived from the corrupted text and it agrees;
  *  - a length of `4n + 1`, which no encoder can produce (a base64 string is
  *    4n, 4n+2 or 4n+3 characters — unpadded tails are accepted, since the
  *    fork already takes payloads that arrive without padding);
@@ -132,6 +161,15 @@ function describeSource(source: string): string {
  */
 function decodeBase64Payload(b64: string): Buffer {
   const compact = b64.replace(/\s+/g, '')
+  const foreign = NON_BASE64_CHAR.exec(compact)
+  if (foreign) {
+    throw new UploadPayloadError(
+      `The base64 payload contains ${describeCharAt(compact, foreign.index)} at character ${foreign.index}, which is ` +
+        `not a base64 character. Decoding skips it and re-cuts every byte after it, so the file would be stored ` +
+        `corrupted from that point on at very nearly the right size — nothing later in the chain can see that. ` +
+        `Nothing was uploaded — re-encode the file and send the encoder's output unaltered.`,
+    )
+  }
   if (compact.length % 4 === 1) {
     throw new UploadPayloadError(
       `The base64 payload is truncated: ${compact.length} characters cannot be a complete base64 string. ` +
