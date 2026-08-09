@@ -317,6 +317,88 @@ describe('file-upload integrity', () => {
     })
   })
 
+  /**
+   * A character outside the alphabet is worse than a missing one. Node's decoder
+   * skips it, which pulls everything after it back a place and re-cuts the whole
+   * remainder across the wrong 4-character boundaries: the file is garbage from
+   * that point on, at a size within a byte of correct. None of the other guards
+   * see it — the length still looks well-formed, the format markers can still be
+   * in place, and a content_length derived from the corrupted text agrees with
+   * itself. So it has to be caught before the decode.
+   */
+  describe('a payload with a character outside the alphabet', () => {
+    const clean = png.toString('base64')
+    /** Drop one character in and keep the length legal, as a transport would. */
+    const withChar = (ch: string) => `${clean.slice(0, 5000)}${ch}${clean.slice(5001)}`
+
+    it('would otherwise decode to a wrong file of very nearly the right size', () => {
+      const corrupted = Buffer.from(withChar('é'), 'base64')
+      expect(corrupted.length).toBeGreaterThan(png.length - 3)
+      expect(corrupted.length).toBeLessThanOrEqual(png.length)
+      expect(corrupted.equals(png)).toBe(false)
+      // ...and identical up to the bad character, which is what hides it.
+      expect(corrupted.subarray(0, 3000).equals(png.subarray(0, 3000))).toBe(true)
+    })
+
+    it('refuses a stray unicode character, naming it and its position', async () => {
+      received.length = 0
+      await expect(send(`data:image/png;base64,${withChar('é')}`)).rejects.toThrow(
+        /contains U\+00E9 at character 5000, which is not a base64 character/,
+      )
+      expect(received).toEqual([])
+    })
+
+    it('refuses a control character', async () => {
+      received.length = 0
+      const nul = String.fromCharCode(0)
+      await expect(send(`data:image/png;base64,${withChar(nul)}`)).rejects.toThrow(/U\+0000 at character 5000/)
+      expect(received).toEqual([])
+    })
+
+    it('refuses printable punctuation, quoting the character itself', async () => {
+      received.length = 0
+      await expect(send(`data:image/png;base64,${withChar('*')}`)).rejects.toThrow(/'\*' \(U\+002A\)/)
+      expect(received).toEqual([])
+    })
+
+    // A bare payload never reaches the decode with a foreign character in it:
+    // the same character makes it fail the base64 shape test, so it is read as a
+    // path and refused there. Different message, same outcome — nothing is
+    // uploaded — which is what this pins. The data: URI branch is the one with
+    // no shape test in front of it, and hence the one that needed the guard.
+    it('is refused in a bare base64 payload too, by the shape test ahead of it', async () => {
+      received.length = 0
+      await expect(send(withChar('é'))).rejects.toThrow()
+      expect(received).toEqual([])
+    })
+
+    // The charset check must not outrank the padding diagnosis: '=' in the wrong
+    // place has its own, more useful message about concatenated chunks.
+    it('leaves misplaced padding its own diagnosis', async () => {
+      received.length = 0
+      const half = png.subarray(0, 3001).toString('base64')
+      await expect(send(`data:image/png;base64,${half}${half}`)).rejects.toThrow(/padding/)
+      expect(received).toEqual([])
+    })
+
+    // Encoders wrap their output; a newline shifts no bytes and must stay legal.
+    it('still accepts line-wrapped base64', async () => {
+      received.length = 0
+      const wrapped = clean.replace(/(.{76})/g, '$1\r\n')
+      expect(wrapped).toContain('\r\n')
+      await send(wrapped)
+      expect(received).toEqual([png.length])
+    })
+
+    // base64url spells the same bytes with '-' and '_'; both are in the alphabet.
+    it('still accepts a base64url payload', async () => {
+      received.length = 0
+      const urlSafe = clean.replace(/\+/g, '-').replace(/\//g, '_')
+      await send(urlSafe)
+      expect(received).toEqual([png.length])
+    })
+  })
+
   // Size is checked first: a file can end with its format's marker and still be
   // missing bytes, so a correct-looking PNG must not outvote the stated size.
   it('refuses a complete-looking PNG whose size contradicts the declaration', async () => {
