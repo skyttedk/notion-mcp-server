@@ -42,6 +42,27 @@ all of them** - re-apply after every bump:
   description never listed - without it a typo could only be deleted and
   reposted, losing the comment's place in the thread. The new `rich_text`
   replaces the old text entirely.
+- **Editing a block's text:** `API-update-a-block` (`PATCH
+  /v1/blocks/{block_id}`) declared its whole body as one empty-`properties`
+  object named `type`. `HttpClient` sends every declared body property verbatim
+  at the top level, so the payload left as `{"type": {...}}` - one level too
+  deep - and Notion rejected every call with a validation error naming each
+  block type as undefined. Only `archived` ever worked, which left the tool able
+  to delete and restore a block but never to edit one; correcting a typo meant
+  appending a fixed copy and archiving the original, changing the block's id and
+  leaving a tombstone in the page's trash. The block-type keys now sit at the
+  top level beside `archived` - `paragraph`, `heading_1`..`heading_3`,
+  `bulleted_list_item`, `numbered_list_item`, `toggle`, `quote`, `callout`,
+  `code` via the new `blockTextUpdateRequest`, and `to_do` via
+  `toDoBlockUpdateRequest`, which also carries `checked` and requires neither
+  field so a box can be ticked without rewriting its text. Same nesting
+  convention `API-patch-block-children` already used, and no client change was
+  needed. Notion only updates text and `checked`: a key naming a different type
+  than the block's own fails with a 400 "Block type mismatch", so a block cannot
+  be converted this way. Verified against the live API 2026-08-09 (text
+  corrected in one call, a to-do ticked with its wording intact, the mismatch
+  400 observed). Guarded by
+  `src/openapi-mcp-server/client/__tests__/update-block.test.ts`.
 - **The 2000-character limit, stated:** both comment tools now say that Notion
   caps `text.content` at 2000 characters and the `rich_text` array at 100 runs.
   The cap is **per run, not per comment** (verified against the live API: two
@@ -135,7 +156,7 @@ would reject a third of all notes and icons to guard against a cut that does not
 happen inside a single message.
 
 The guard tests live in `src/openapi-mcp-server/client/__tests__/comment-attachments.test.ts`,
-`update-comment.test.ts`,
+`update-comment.test.ts`, `update-block.test.ts`,
 `http-client-upload.test.ts`, `http-client.upload-integrity.test.ts` and the tool-surface snapshot in
 `src/openapi-mcp-server/openapi/__tests__/notion-spec.snapshot.test.ts` - if a
 bump drops a patch, those fail rather than the capability disappearing quietly.
