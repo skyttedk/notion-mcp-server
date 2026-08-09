@@ -209,6 +209,16 @@ npm run dev        # Start dev server with hot reload
 
 Tests are in `__tests__` directories adjacent to source files. Run with `npm test`.
 
+**Snapshot files are pinned to LF in `.gitattributes`** (`*.snap text eol=lf`).
+Vitest rewrites `notion-spec.snapshot.test.ts.snap` with LF endings on every run,
+while Git for Windows checks it out as CRLF by default (`core.autocrlf=true`
+lives in its *system* config, so it applies even with nothing set locally). The
+mismatch left `git status` reporting the file modified after every test run
+while `git diff` showed nothing at all - the blob is byte-identical once the
+endings are normalised, so only the checkout form differed. Don't remove the
+line, and don't "fix" a stale CRLF copy by editing the snapshot: check it out
+again (`git checkout -- <path>`) and the attribute lands it as LF.
+
 ## API Version
 
 Uses Notion API version `2025-09-03` (Data Source Edition). The spec includes both:

@@ -1,0 +1,7 @@
+# Vitest rewrites snapshot files with LF endings on every run. Git for Windows
+# ships core.autocrlf=true in its system config, so without this line the same
+# file is checked out with CRLF — and `git status` then reports it modified
+# after every `npm test`, even though the content is byte-identical once the
+# endings are normalised (`git diff` shows nothing). Pinning eol=lf makes the
+# checked-out copy agree with what the test run writes.
+*.snap text eol=lf
