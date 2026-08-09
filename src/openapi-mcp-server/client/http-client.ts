@@ -186,16 +186,59 @@ function encodingProvesCompleteness(encoded: string): boolean {
  */
 const UNPROVABLE_PAYLOAD_LIMIT = 1024
 
-/** Byte signature plus the trailer that marks the format's end-of-file. */
-const CONTAINER_FORMATS: { name: string; magic: number[]; endsWith?: number[]; endMarker?: string }[] = [
+/**
+ * A size the file's own header states about itself: an unsigned little-endian
+ * integer of `size` bytes at `offset`, counting every byte from position
+ * `covers` onward. A whole file is therefore exactly `covers + value` bytes.
+ *
+ * `covers` is spelled out rather than folded into the number because getting it
+ * wrong is the classic bug with these fields: RIFF's size counts from byte 8,
+ * not from byte 0, so a naive comparison is off by exactly the eight bytes of
+ * header it excludes. Little-endian only — that covers RIFF and BMP; the
+ * ISO-BMFF formats (AVIF, HEIC) state their sizes big-endian and per box, so
+ * they need box walking rather than one field, and no unused knob here.
+ */
+type LengthField = { offset: number; size: number; covers: number }
+
+/**
+ * Byte signature plus whatever the format offers as proof of being whole: a
+ * trailer at the end of the file (`endsWith`/`endMarker`), or a length the
+ * header declares up front (`lengthField`).
+ *
+ * `alsoAt` carries further signature bytes at a fixed offset, for a container
+ * whose leading magic is shared with other formats — RIFF also fronts WAV and
+ * AVI, and only the tag at byte 8 says which one this is.
+ */
+const CONTAINER_FORMATS: {
+  name: string
+  magic: number[]
+  alsoAt?: { offset: number; bytes: number[] }[]
+  endsWith?: number[]
+  endMarker?: string
+  lengthField?: LengthField
+}[] = [
   { name: 'PNG', magic: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], endsWith: [0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82] },
   { name: 'JPEG', magic: [0xff, 0xd8, 0xff], endsWith: [0xff, 0xd9] },
   { name: 'GIF', magic: [0x47, 0x49, 0x46, 0x38], endsWith: [0x3b] },
   { name: 'PDF', magic: [0x25, 0x50, 0x44, 0x46, 0x2d], endMarker: '%%EOF' },
+  {
+    // 'RIFF' …size… 'WEBP'. No trailer of any kind, so completeness is read off
+    // the declared size instead — which needs no cooperation from the caller,
+    // unlike a content_length. WebP is worth the extra mechanism because it is
+    // what several screenshot tools and browsers now save by default.
+    name: 'WebP',
+    magic: [0x52, 0x49, 0x46, 0x46],
+    alsoAt: [{ offset: 8, bytes: [0x57, 0x45, 0x42, 0x50] }],
+    lengthField: { offset: 4, size: 4, covers: 8 },
+  },
 ]
 
 function startsWith(buf: Buffer, bytes: number[]): boolean {
   return buf.length >= bytes.length && bytes.every((byte, i) => buf[i] === byte)
+}
+
+function bytesAt(buf: Buffer, offset: number, bytes: number[]): boolean {
+  return buf.length >= offset + bytes.length && bytes.every((byte, i) => buf[offset + i] === byte)
 }
 
 /**
@@ -207,7 +250,8 @@ function startsWith(buf: Buffer, bytes: number[]): boolean {
  * with what Notion stored — identical numbers when the payload was already
  * short when it reached us. A 43,627-byte screenshot arrived as its first 8,751
  * bytes and was attached as a broken image with no error anywhere. The formats
- * listed above declare their own end, so a missing trailer proves the file is
+ * listed above state either where they end or how long they are, so a missing
+ * trailer — or a byte count short of the declared one — proves the file is
  * incomplete.
  *
  * The third verdict matters as much as the other two: for anything without a
@@ -220,6 +264,25 @@ type ContainerVerdict = { status: 'complete' } | { status: 'incomplete'; message
 function judgeContainer(buf: Buffer): ContainerVerdict {
   for (const format of CONTAINER_FORMATS) {
     if (!startsWith(buf, format.magic)) continue
+    // Not yet enough bytes to tell this container from another with the same
+    // leading magic: no signature, so no opinion.
+    if (format.alsoAt?.some(({ offset, bytes }) => !bytesAt(buf, offset, bytes))) continue
+    if (format.lengthField) {
+      const { offset, size, covers } = format.lengthField
+      if (buf.length < offset + size) return { status: 'unknown' }
+      const expected = covers + buf.readUIntLE(offset, size)
+      if (buf.length === expected) return { status: 'complete' }
+      // Longer than declared is not truncation — every byte the header promises
+      // did arrive — but it is not something this check understands either, so
+      // it stays an open question for the guards that follow.
+      if (buf.length > expected) return { status: 'unknown' }
+      return {
+        status: 'incomplete',
+        message:
+          `The ${format.name} payload is incomplete: its header declares a ${expected}-byte file but ${buf.length} bytes ` +
+          `arrived, so it was cut short before it reached the server. Nothing was uploaded — send the whole file.`,
+      }
+    }
     if (format.endsWith) {
       const tail = buf.subarray(-format.endsWith.length)
       const complete = tail.length === format.endsWith.length && format.endsWith.every((byte, i) => tail[i] === byte)
