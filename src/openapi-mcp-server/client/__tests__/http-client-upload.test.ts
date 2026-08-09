@@ -207,6 +207,60 @@ describe('HttpClient File Upload', () => {
       expect(fs.createReadStream).not.toHaveBeenCalled()
     })
 
+    // The url-safe alphabet (RFC 4648 §5) spells the same bytes with '-' and
+    // '_'. It used to match neither shape test, so the value fell through to
+    // the path branch and came back as "no such file" — an error about the
+    // filesystem for a payload that never named a file.
+    describe('base64url', () => {
+      // Encodes to '/++/' per three bytes, i.e. '_--_' url-safe, so every
+      // payload below genuinely exercises both substituted characters.
+      const urlSafeBytes = (groups: number) => Buffer.from(Array.from({ length: groups * 3 }, (_, i) => [0xff, 0xef, 0xbf][i % 3]))
+      const toBase64Url = (buf: Buffer) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_')
+
+      it('round-trips an unpadded base64url payload to the original bytes', async () => {
+        const bytes = urlSafeBytes(8) // 24 bytes: a whole number of groups, so no padding
+        const encoded = toBase64Url(bytes)
+        expect(encoded).toMatch(/-/)
+        expect(encoded).toMatch(/_/)
+        expect(encoded).not.toContain('=')
+
+        const call = await runUpload(encoded)
+        expect(call?.[1]).toBeInstanceOf(Buffer)
+        expect((call?.[1] as Buffer).equals(bytes)).toBe(true)
+        expect(fs.createReadStream).not.toHaveBeenCalled()
+      })
+
+      it('round-trips a padded base64url payload to the original bytes', async () => {
+        const bytes = Buffer.concat([urlSafeBytes(8), Buffer.from([0xff])]) // 25 bytes -> '==' padding
+        const encoded = toBase64Url(bytes)
+        expect(encoded).toMatch(/-/)
+        expect(encoded).toMatch(/_/)
+        expect(encoded).toMatch(/==$/)
+
+        const call = await runUpload(encoded)
+        expect((call?.[1] as Buffer).equals(bytes)).toBe(true)
+        expect(fs.createReadStream).not.toHaveBeenCalled()
+      })
+
+      // What most base64url encoders actually emit: padding omitted entirely,
+      // so the length is not a multiple of four.
+      it('round-trips base64url with the padding stripped, as encoders emit it', async () => {
+        const bytes = Buffer.concat([urlSafeBytes(26), Buffer.from([0xff, 0xef])]) // 80 bytes
+        const encoded = toBase64Url(bytes).replace(/=+$/, '')
+        expect(encoded.length % 4).not.toBe(0)
+
+        const call = await runUpload(encoded)
+        expect((call?.[1] as Buffer).equals(bytes)).toBe(true)
+        expect(fs.createReadStream).not.toHaveBeenCalled()
+      })
+
+      // A string mixing the two alphabets is valid base64 in neither, so it is
+      // still not read as bytes.
+      it('does not read a value mixing both alphabets as base64', async () => {
+        await expect(runUpload('AAAA+AAA_AAA')).rejects.toThrow(/no such file on the machine running this server/)
+      })
+    })
+
     // Length is no longer the signal, so an existing file must still win —
     // otherwise a stdio path made only of base64 characters would be decoded.
     it('prefers a local file that actually exists over reading it as base64', async () => {
