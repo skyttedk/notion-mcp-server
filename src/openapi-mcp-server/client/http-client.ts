@@ -21,6 +21,20 @@ export type HttpClientResponse<T = any> = {
 const BARE_BASE64_CHARS = /^[A-Za-z0-9+/]+={0,2}$/
 
 /**
+ * The url-safe alphabet (RFC 4648 §5), which spells the same bytes with `-` for
+ * `+` and `_` for `/`, and usually without padding.
+ *
+ * Tested separately rather than by widening the standard pattern, so a string
+ * mixing the two alphabets — valid in neither — is still not read as base64.
+ */
+const BARE_BASE64URL_CHARS = /^[A-Za-z0-9_-]+={0,2}$/
+
+/** The url-safe alphabet spelled back as the standard one, so Node can decode it. */
+function toStandardBase64(compact: string): string {
+  return compact.replace(/-/g, '+').replace(/_/g, '/')
+}
+
+/**
  * Whether a file-parameter value is inline base64 rather than a path.
  *
  * Length used to be the signal (100+ characters), which broke on tiny files:
@@ -38,11 +52,15 @@ const BARE_BASE64_CHARS = /^[A-Za-z0-9+/]+={0,2}$/
  * base64 string", which is what they had just sent: a screenshot could be
  * encoded correctly and still be unattachable, with nothing in the message
  * pointing at the trailing newline.
+ *
+ * Both alphabets count. A base64url payload used to match neither pattern, so
+ * it fell through to the path branch and came back as "no such file" — an error
+ * about the filesystem for a value that never named a file.
  */
 function isBareBase64(source: string): boolean {
   const compact = source.replace(/\s+/g, '')
   if (compact.length === 0) return false
-  if (!BARE_BASE64_CHARS.test(compact)) return false
+  if (!BARE_BASE64_CHARS.test(compact) && !BARE_BASE64URL_CHARS.test(compact)) return false
   // The 100+ clause is the fork's original rule, kept so long payloads that
   // arrive without padding keep working.
   return compact.length % 4 === 0 || compact.length >= 100
@@ -127,7 +145,13 @@ function decodeBase64Payload(b64: string): Buffer {
         `silently stop there and store only part of the file. Send one continuous base64 string, not concatenated chunks.`,
     )
   }
-  return Buffer.from(compact, 'base64')
+  // Translated rather than handed straight to Node: current Node versions
+  // happen to accept `-` and `_` under the 'base64' encoding, but that is
+  // leniency, not a documented guarantee, and it would decode to silently wrong
+  // bytes if it ever tightened. Spelling the alphabet back is unambiguous, and
+  // a no-op for the standard one. The checks above run on the untranslated
+  // string, whose `=` padding is the same in both alphabets.
+  return Buffer.from(toStandardBase64(compact), 'base64')
 }
 
 /**
