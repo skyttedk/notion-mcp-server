@@ -529,7 +529,7 @@ Error Responses:
   },
   {
     "description": "Notion | Send a file upload
-Step 2: transfer the bytes for an upload created by \`API-create-a-file-upload\`. Because this server runs remotely and shares no filesystem with the caller, the \`file\` parameter accepts a data: URI, a bare base64 string, or an http(s) URL the server can fetch — a local path only works when running over stdio.",
+Step 2: transfer the bytes for an upload created by \`API-create-a-file-upload\`. Because this server runs remotely and shares no filesystem with the caller, the \`file\` parameter accepts a data: URI, a bare base64 string, or an http(s) URL the server can fetch — a local path only works when running over stdio. Whichever form is used, the whole file travels in this one call as a single unbroken payload: contents produced in pieces must be joined before they are sent, and \`content_length\` is what proves none went missing.",
     "httpMethod": "post",
     "name": "send-a-file-upload",
     "properties": [

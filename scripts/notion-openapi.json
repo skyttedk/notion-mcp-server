@@ -1560,7 +1560,7 @@
     "/v1/file_uploads/{file_upload_id}/send": {
       "post": {
         "summary": "Send a file upload",
-        "description": "Step 2: transfer the bytes for an upload created by `API-create-a-file-upload`. Because this server runs remotely and shares no filesystem with the caller, the `file` parameter accepts a data: URI, a bare base64 string, or an http(s) URL the server can fetch — a local path only works when running over stdio.",
+        "description": "Step 2: transfer the bytes for an upload created by `API-create-a-file-upload`. Because this server runs remotely and shares no filesystem with the caller, the `file` parameter accepts a data: URI, a bare base64 string, or an http(s) URL the server can fetch — a local path only works when running over stdio. Whichever form is used, the whole file travels in this one call as a single unbroken payload: contents produced in pieces must be joined before they are sent, and `content_length` is what proves none went missing.",
         "operationId": "send-a-file-upload",
         "parameters": [
           {
@@ -1588,7 +1588,7 @@
                   "file": {
                     "type": "string",
                     "format": "binary",
-                    "description": "File contents as a data: URI, a bare base64 string, or an http(s) URL to fetch."
+                    "description": "File contents as a data: URI, a bare base64 string, or an http(s) URL to fetch. Send them as one continuous, unbroken string in a single call. Contents assembled in pieces — chunked reads, several tool calls, an encoder that emitted parts — must be joined first: a payload that lost a piece on the way still decodes cleanly and looks whole, so the loss is caught only by the `content_length` check, and only if you sent it."
                   },
                   "content_length": {
                     "type": "integer",
