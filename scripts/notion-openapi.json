@@ -38,6 +38,127 @@
       }
     },
     "schemas": {
+      "pageObjectResponse": {
+        "type": "object",
+        "description": "A page object.",
+        "properties": {
+          "object": { "type": "string", "description": "Always `page`." },
+          "id": { "type": "string", "description": "The page's UUID. Pass it to API-retrieve-a-page, API-patch-page, or as a `block_id` to API-get-block-children." },
+          "created_time": { "type": "string", "format": "date-time" },
+          "last_edited_time": { "type": "string", "format": "date-time" },
+          "created_by": { "type": "object", "description": "Partial user: `object` and `id` only." },
+          "last_edited_by": { "type": "object", "description": "Partial user: `object` and `id` only." },
+          "cover": { "type": "object", "description": "File object, or null." },
+          "icon": { "type": "object", "description": "Emoji or file object, or null." },
+          "parent": { "type": "object", "description": "One of `{type: \"data_source_id\", data_source_id}`, `{type: \"page_id\", page_id}`, `{type: \"block_id\", block_id}` or `{type: \"workspace\", workspace: true}`." },
+          "properties": { "type": "object", "description": "Property values keyed by property name. Each value carries `id`, `type`, and the value itself under a key named by that type — so a select reads `{\"type\": \"select\", \"select\": {\"name\": ...}}`. A page outside a data source has only `title`." },
+          "url": { "type": "string" },
+          "public_url": { "type": "string", "description": "Public share URL, or null when the page is not shared." },
+          "archived": { "type": "boolean" },
+          "is_archived": { "type": "boolean", "description": "Same state as `archived`, under the newer name." },
+          "in_trash": { "type": "boolean" },
+          "is_locked": { "type": "boolean" },
+          "request_id": { "type": "string", "description": "Notion's id for this request. Quote it when reporting a problem to Notion." }
+        }
+      },
+      "blockObjectResponse": {
+        "type": "object",
+        "description": "A block object. Its content sits under a key named by its own `type` — a paragraph carries `paragraph`, a heading `heading_1`.",
+        "properties": {
+          "object": { "type": "string", "description": "Always `block`." },
+          "id": { "type": "string" },
+          "parent": { "type": "object", "description": "The page or block this one sits in." },
+          "type": { "type": "string", "description": "The block type (`paragraph`, `heading_1`, `to_do`, `image`, `child_page`, ...), and also the name of the key holding this block's content." },
+          "has_children": { "type": "boolean", "description": "True when the block contains child blocks; fetch them with API-get-block-children on this block's `id`." },
+          "created_time": { "type": "string", "format": "date-time" },
+          "last_edited_time": { "type": "string", "format": "date-time" },
+          "created_by": { "type": "object", "description": "Partial user: `object` and `id` only." },
+          "last_edited_by": { "type": "object", "description": "Partial user: `object` and `id` only." },
+          "archived": { "type": "boolean" },
+          "in_trash": { "type": "boolean" },
+          "request_id": { "type": "string" }
+        }
+      },
+      "paginatedListResponse": {
+        "type": "object",
+        "description": "A paginated list. While `has_more` is true, pass `next_cursor` back as `start_cursor` to get the following page.",
+        "properties": {
+          "object": { "type": "string", "description": "Always `list`." },
+          "results": { "type": "array", "items": { "type": "object" }, "description": "The items. Which object type they are follows `type` — page, block, data source, database, user or comment objects." },
+          "next_cursor": { "type": "string", "description": "Cursor for the next page, or null on the last one." },
+          "has_more": { "type": "boolean" },
+          "type": { "type": "string", "description": "What `results` holds, e.g. `block`, `comment`, `user`, `page_or_data_source`. A key of that same name is also present, and is always an empty object." },
+          "request_id": { "type": "string" }
+        }
+      },
+      "dataSourceObjectResponse": {
+        "type": "object",
+        "description": "A data source object — the column schema behind a database. Rows are pages; query them with API-query-data-source.",
+        "properties": {
+          "object": { "type": "string", "description": "Always `data_source`." },
+          "id": { "type": "string", "description": "The `data_source_id` to query or update." },
+          "title": { "type": "array", "items": { "type": "object" }, "description": "Rich text runs of the name." },
+          "description": { "type": "array", "items": { "type": "object" }, "description": "Rich text runs." },
+          "properties": { "type": "object", "description": "The column schema keyed by property name; each entry carries `id`, `name`, `type` and that type's own configuration, e.g. `select.options`. Read it before writing a page property — a select only accepts an option that already exists here." },
+          "parent": { "type": "object", "description": "`{type: \"database_id\", database_id}` — the database this data source belongs to." },
+          "database_parent": { "type": "object", "description": "Where that database itself lives, e.g. `{type: \"page_id\", page_id}`." },
+          "created_time": { "type": "string", "format": "date-time" },
+          "last_edited_time": { "type": "string", "format": "date-time" },
+          "created_by": { "type": "object" },
+          "last_edited_by": { "type": "object" },
+          "icon": { "type": "object" },
+          "cover": { "type": "object" },
+          "is_inline": { "type": "boolean" },
+          "url": { "type": "string" },
+          "public_url": { "type": "string" },
+          "archived": { "type": "boolean" },
+          "in_trash": { "type": "boolean" },
+          "request_id": { "type": "string" }
+        }
+      },
+      "databaseObjectResponse": {
+        "type": "object",
+        "description": "A database object. It holds presentation and the list of data sources; the columns live on the data source, not here.",
+        "properties": {
+          "object": { "type": "string", "description": "Always `database`." },
+          "id": { "type": "string" },
+          "title": { "type": "array", "items": { "type": "object" }, "description": "Rich text runs." },
+          "description": { "type": "array", "items": { "type": "object" }, "description": "Rich text runs." },
+          "data_sources": { "type": "array", "items": { "type": "object" }, "description": "The database's data sources as `{id, name}`. Take an `id` from here and call API-retrieve-a-data-source or API-query-data-source with it — the database id itself cannot be queried for rows." },
+          "parent": { "type": "object" },
+          "created_time": { "type": "string", "format": "date-time" },
+          "last_edited_time": { "type": "string", "format": "date-time" },
+          "icon": { "type": "object" },
+          "cover": { "type": "object" },
+          "is_inline": { "type": "boolean" },
+          "is_locked": { "type": "boolean" },
+          "url": { "type": "string" },
+          "public_url": { "type": "string" },
+          "archived": { "type": "boolean" },
+          "in_trash": { "type": "boolean" },
+          "request_id": { "type": "string" }
+        }
+      },
+      "fileUploadObjectResponse": {
+        "type": "object",
+        "description": "A file upload object. It is `pending` until the bytes arrive and `uploaded` afterwards, and it expires at `expiry_time` (one hour) unless it is attached to a block, page property or comment before then.",
+        "properties": {
+          "object": { "type": "string", "description": "Always `file_upload`." },
+          "id": { "type": "string", "description": "The upload id — send the bytes to it with API-send-a-file-upload, then reference it as `{\"type\": \"file_upload\", \"file_upload\": {\"id\": \"<id>\"}}`." },
+          "status": { "type": "string", "description": "`pending` until the bytes arrive, then `uploaded`; also `expired` or `failed`." },
+          "filename": { "type": "string" },
+          "content_type": { "type": "string" },
+          "content_length": { "type": "integer", "description": "How many bytes Notion stored — null while pending. Compare it with the source file's size: a smaller number means the payload was cut short on the way in." },
+          "upload_url": { "type": "string", "description": "Where the bytes go. Present while the upload is pending." },
+          "expiry_time": { "type": "string", "format": "date-time", "description": "When an unattached upload is discarded." },
+          "created_time": { "type": "string", "format": "date-time" },
+          "last_edited_time": { "type": "string", "format": "date-time" },
+          "created_by": { "type": "object" },
+          "archived": { "type": "boolean" },
+          "in_trash": { "type": "boolean" },
+          "request_id": { "type": "string" }
+        }
+      },
       "viewSortRequest": {
         "type": "object",
         "description": "One sort rule applied to the view's rows. Same shape as a data source query sort.",
@@ -1549,7 +1670,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/fileUploadObjectResponse"
                 }
               }
             }
@@ -1609,7 +1730,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/fileUploadObjectResponse"
                 }
               }
             }
@@ -1642,7 +1763,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/fileUploadObjectResponse"
                 }
               }
             }
@@ -1971,7 +2092,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/paginatedListResponse"
                 }
               }
             }
@@ -2050,7 +2171,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/paginatedListResponse"
                 }
               }
             }
@@ -2134,7 +2255,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/paginatedListResponse"
                 }
               }
             }
@@ -2195,7 +2316,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/blockObjectResponse"
                 }
               }
             }
@@ -2303,7 +2424,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/blockObjectResponse"
                 }
               }
             }
@@ -2362,7 +2483,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/blockObjectResponse"
                 }
               }
             }
@@ -2431,7 +2552,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/pageObjectResponse"
                 }
               }
             }
@@ -2555,7 +2676,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/pageObjectResponse"
                 }
               }
             }
@@ -2651,7 +2772,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/pageObjectResponse"
                 }
               }
             }
@@ -3480,7 +3601,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/paginatedListResponse"
                 }
               }
             }
@@ -3544,7 +3665,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/dataSourceObjectResponse"
                 }
               }
             }
@@ -3634,7 +3755,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/dataSourceObjectResponse"
                 }
               }
             }
@@ -3718,7 +3839,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/dataSourceObjectResponse"
                 }
               }
             }
@@ -3861,7 +3982,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/databaseObjectResponse"
                 }
               }
             }
@@ -3943,7 +4064,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/pageObjectResponse"
                 }
               }
             }

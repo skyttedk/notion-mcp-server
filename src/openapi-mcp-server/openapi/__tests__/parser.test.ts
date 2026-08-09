@@ -1058,9 +1058,9 @@ describe('OpenAPIToMCPConverter - Additional Complex Tests', () => {
             methods: [
               {
                 name: 'getAB',
-                description: 'Get an A-B object',
-                // Error responses might not be listed here since none are defined.
-                // Just end the description with no Error Responses section.
+                // The success response's own shape is documented too, not only
+                // the error responses (of which this fixture defines none).
+                description: 'Get an A-B object\nReturns:\nA schema description\nFields: name: string, b: object',
                 inputSchema: {
                   type: 'object',
                   properties: {},
@@ -1113,7 +1113,7 @@ describe('OpenAPIToMCPConverter - Additional Complex Tests', () => {
               },
               {
                 name: 'createAB',
-                description: 'Create an A-B object',
+                description: 'Create an A-B object\nReturns:\nA schema description\nFields: name: string, b: object',
                 inputSchema: {
                   type: 'object',
                   properties: {
