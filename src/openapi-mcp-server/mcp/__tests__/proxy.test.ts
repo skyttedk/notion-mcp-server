@@ -186,47 +186,81 @@ describe('MCPProxy', () => {
       ).rejects.toThrow('Method nonExistentMethod not found')
     })
 
-    it('should handle tool names exceeding 64 characters', async () => {
-      // Mock HttpClient response
-      const mockResponse = {
-        data: { message: 'success' },
-        status: 200,
-        headers: new Headers({
-          'content-type': 'application/json'
+    // A tool whose full name exceeds 64 characters is advertised truncated, but
+    // `openApiLookup` is keyed by the full name — so the name a caller is shown
+    // was not the name that resolved, and every such call died on "Method not
+    // found". These two tests build the proxy from a spec and stub nothing but
+    // the HTTP response, so they exercise the real registration path; an earlier
+    // version of this test hand-stubbed `openApiLookup` under the truncated key
+    // and therefore only proved that a correctly-keyed lookup works.
+    describe('tool names exceeding 64 characters', () => {
+      const longOperationId = 'a'.repeat(65)
+
+      // Builds a proxy whose single operation has a name longer than 64 chars.
+      const buildLongNamedProxy = () => {
+        const mockResponse = {
+          data: { message: 'success' },
+          status: 200,
+          headers: new Headers({
+            'content-type': 'application/json'
+          })
+        };
+        (HttpClient.prototype.executeOperation as ReturnType<typeof vi.fn>).mockResolvedValue(mockResponse)
+
+        mockOpenApiSpec.paths = {
+          '/test': {
+            get: {
+              operationId: longOperationId,
+              responses: { '200': { description: 'Success' } }
+            }
+          }
+        }
+        proxy = new MCPProxy('test-proxy', mockOpenApiSpec)
+
+        const server = (proxy as any).server
+        const handlers = server.setRequestHandler.mock.calls
+          .flatMap((x: unknown[]) => x)
+          .filter((x: unknown) => typeof x === 'function')
+
+        return { listToolsHandler: handlers[0], callToolHandler: handlers[1] }
+      }
+
+      const expectSuccess = (result: unknown) =>
+        expect(result).toEqual({
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ message: 'success' })
+            }
+          ]
         })
-      };
-      (HttpClient.prototype.executeOperation as ReturnType<typeof vi.fn>).mockResolvedValue(mockResponse);
 
-      // Set up the openApiLookup with a long tool name
-      const longToolName = 'a'.repeat(65)
-      const truncatedToolName = longToolName.slice(0, 64)
-      ;(proxy as any).openApiLookup = {
-        [truncatedToolName]: {
-          operationId: longToolName,
-          responses: { '200': { description: 'Success' } },
-          method: 'get',
-          path: '/test'
-        }
-      };
+      it('is callable under the truncated name that tools/list advertised', async () => {
+        const { listToolsHandler, callToolHandler } = buildLongNamedProxy()
 
-      const server = (proxy as any).server;
-      const handlers = server.setRequestHandler.mock.calls.flatMap((x: unknown[]) => x).filter((x: unknown) => typeof x === 'function');
-      const callToolHandler = handlers[1];
+        const listed = await listToolsHandler()
+        const listedName: string = listed.tools[0].name
+        // Guard the premise: without truncation there is no mismatch to regress on.
+        expect(listedName).toHaveLength(64)
 
-      const result = await callToolHandler({
-        params: {
-          name: truncatedToolName,
-          arguments: {}
-        }
+        const result = await callToolHandler({
+          params: { name: listedName, arguments: {} }
+        })
+
+        expectSuccess(result)
       })
 
-      expect(result).toEqual({
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({ message: 'success' })
-          }
-        ]
+      it('is still callable under its full, untruncated name', async () => {
+        const { callToolHandler } = buildLongNamedProxy()
+
+        const fullName = Object.keys((proxy as any).openApiLookup).find((key) => key.length > 64)
+        expect(fullName).toBeDefined()
+
+        const result = await callToolHandler({
+          params: { name: fullName, arguments: {} }
+        })
+
+        expectSuccess(result)
       })
     })
   })
