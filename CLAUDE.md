@@ -294,16 +294,50 @@ letter nor a `+`. Filenames are lowercase words and separators; base64 over real
 file bytes almost always has an uppercase letter or a `+`, and the odds compound
 with every group. A 4n+1 length stays a path - no encoder can emit one.
 
-**The widening is deliberately additive: the guard decides only the two newly
-admitted lengths.** Extending it to the 4n case would also veto genuine
-all-lowercase base64 of a few bytes (~3% of 6-byte payloads, ~12% of 3-byte
-ones), and `/` is a legal standard-base64 character, so the `/` clause would
-reject roughly one short payload in eight. Both are live paths. The residual
-false positive it leaves - a 4n-length lowercase extensionless name such as
-`my-notes`, decoded to junk bytes when no such file exists - predates this fix
-and is pinned by a test that says so. An existing file on disk always wins over
-the base64 reading either way, so stdio callers passing real paths are untouched
-whatever the name looks like.
+**That widening was deliberately additive: `looksLikeWrittenName` decides only
+the two newly admitted lengths**, because those were refused outright before, so
+a veto there can only restore the old answer. On the 4n length - accepted since
+the fork's first version - the same two signals are not enough on their own: `/`
+is a legal standard-base64 character, and all-lowercase base64 of a few bytes is
+genuine often enough to matter (~12% of 3-byte payloads, ~3% of 6-byte ones).
+
+**The 4n case has its own veto, `readsAsMistypedName`, and it needs all four of
+its conditions.** Before it, a short lowercase extensionless name whose length
+happened to be a multiple of four - `my-notes`, `project-plan` - was charset-valid
+base64, so a mistyped path was decoded to junk bytes, uploaded, and reported as a
+success. The four conditions: at most **16 characters** (12 decoded bytes), **no
+`=` padding** (an encoder's signature, never part of a filename),
+`looksLikeWrittenName`, and the decoded bytes do **not** look like content - no
+known file header (PNG/JPEG/GIF/PDF/ZIP/UTF-8 BOM) and not valid UTF-8 that is
+≥87% printable. A declared `content_length` switches the veto off entirely: the
+caller has said the value is the bytes and how many, and a wrong reading would be
+caught by the length check rather than stored.
+
+Two of those conditions are load-bearing in ways that are easy to undo:
+
+- **The 16-character cap is not tuning, it is the boundary between two
+  populations.** "No uppercase and no `+`" is sound for base64 over *random*
+  bytes but not over *structured* ones: the repo's own base64url fixture, 24
+  bytes of `0xff 0xef 0xbf`, encodes to 32 all-lowercase characters of genuine
+  payload. A cap of 32 (the first draft) would have refused it. Payloads that
+  regular are never 12 bytes long; a mistyped path is a short word. Raising the
+  cap moves the veto into real-payload territory.
+- **The magic-prefix list earns its place on JPEG alone.** Three bytes of JPEG
+  header encode to `/9j/` - no uppercase, no `+`, and a `/` - i.e. every name
+  signal at once. Without the header check, real image bytes would be read as a
+  filename.
+
+**Documented residual, deliberately not chased further:** a genuinely random
+binary payload of 3-12 bytes whose base64 is all lowercase and unpadded still
+reads as a name and comes back as "no such file". Gate 2 is a heuristic, not a
+proof, and no cheap check separates twelve arbitrary bytes from twelve other
+arbitrary bytes - entropy scoring was considered and rejected as a false
+precision. The error message therefore names the remedy in that case (send it
+padded, as a data: URI, or with `content_length`), and the hint is added only
+when the value *would* have been read as bytes but for the veto, so an ordinary
+missing path keeps its plain message. An existing file on disk always wins over
+the base64 reading whatever the name looks like, so stdio callers passing real
+paths are untouched.
 
 ### The lockfile trap: optional platform packages with their own dependencies
 

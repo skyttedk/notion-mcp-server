@@ -318,14 +318,112 @@ describe('HttpClient File Upload', () => {
         expect(call?.[1]).toBe(stream)
       })
 
-      // Documented limitation, deliberately left as it was. A 4n-length name is
-      // accepted by the pre-existing length clause, and vetoing it there would
-      // also veto genuine all-lowercase base64 of a few bytes — a live path,
-      // unlike this one. The widening in this fix does not reach it.
-      it('reads a 4n-length lowercase name as base64, exactly as before this fix', async () => {
-        const call = await runUpload('my-notes')
-        expect(call?.[1]).toBeInstanceOf(Buffer)
+    })
+
+    // The 4n length was accepted outright from the fork's first version, so a
+    // short lowercase extensionless name whose length happens to be a multiple
+    // of four was decoded to junk bytes and uploaded as if it were the file:
+    // a mistyped path reported back as a success. The veto is four conditions
+    // deep precisely so it takes that shape and nothing else with it.
+    describe('the mistyped-name veto on 4n lengths', () => {
+      it.each(['plan', 'my-notes', 'project-plan', 'quarterly-report'])(
+        'resolves the 4n-length lowercase name %s as a path instead of decoding it',
+        async (name) => {
+          expect(name.length % 4).toBe(0)
+          await expect(runUpload(name)).rejects.toThrow(/no such file on the machine running this server/)
+          expect(fs.createReadStream).not.toHaveBeenCalled()
+        },
+      )
+
+      // The caller of a real short payload must be able to tell this refusal
+      // from an ordinary missing file, or the remedy is invisible.
+      it('names the remedy when the refused value could also have been base64', async () => {
+        await expect(runUpload('my-notes')).rejects.toThrow(/send it with its base64 padding, as a data: URI, or alongside content_length/)
+      })
+
+      // A genuine path carries no such hint: it was never readable as bytes.
+      it('leaves the message alone for a value that is not base64-shaped at all', async () => {
+        const promise = runUpload('/home/agent/notes.txt')
+        await expect(promise).rejects.toThrow(/no such file on the machine running this server/)
+        await expect(promise).rejects.not.toThrow(/base64 padding/)
+      })
+
+      // What the earlier fix protected by leaving the 4n case alone, and what
+      // the content check keeps protecting now: an all-lowercase group is real
+      // base64 often enough to matter, and here it decodes to printable text.
+      it('still decodes an all-lowercase 4n payload whose bytes are printable text', async () => {
+        expect(Buffer.from('omc').toString('base64')).toBe('b21j')
+        const call = await runUpload('b21j')
+        expect((call?.[1] as Buffer).equals(Buffer.from('omc'))).toBe(true)
         expect(fs.createReadStream).not.toHaveBeenCalled()
+      })
+
+      // A JPEG's first three bytes encode to '/9j/' — no uppercase, no '+', and
+      // a '/' in the bargain, i.e. every name signal there is. The magic-prefix
+      // branch is what keeps real image bytes out of the veto.
+      // It is refused further down — three bytes of a JPEG is a truncated file
+      // and the integrity guard says so — but by the payload diagnosis, not by
+      // the filesystem. That is the whole point: it was read as bytes.
+      it('still reads a payload that opens with a known file header as bytes', async () => {
+        const jpegHead = Buffer.from([0xff, 0xd8, 0xff])
+        expect(jpegHead.toString('base64')).toBe('/9j/')
+        const promise = runUpload('/9j/')
+        await expect(promise).rejects.toThrow(/JPEG payload is incomplete/)
+        await expect(promise).rejects.not.toThrow(/no such file/)
+      })
+
+      // The cap. Structured binary can be all-lowercase at any length — the
+      // base64url fixture above is 32 such characters of genuine payload — so
+      // the veto only ever looks at values short enough to be a typed word.
+      it.each([
+        ['4bz/wtiop0lk4olpfiyx', 15],
+        ['cgapdyl3csos1qqotc24', 15],
+      ])('still decodes the all-lowercase payload %s, which is past the length cap', async (encoded, bytes) => {
+        expect(encoded.length).toBeGreaterThan(16)
+        const call = await runUpload(encoded)
+        expect((call?.[1] as Buffer).length).toBe(bytes)
+        expect(fs.createReadStream).not.toHaveBeenCalled()
+      })
+
+      // Padding is an encoder's signature, and never part of a filename.
+      it('still decodes a short all-lowercase payload that carries its padding', async () => {
+        const bytes = Buffer.from([0xa6, 0x56, 0xa7, 0xa6])
+        const encoded = bytes.toString('base64')
+        expect(encoded).toMatch(/=$/)
+        expect(encoded).not.toMatch(/[A-Z+]/)
+        const call = await runUpload(encoded)
+        expect((call?.[1] as Buffer).equals(bytes)).toBe(true)
+      })
+
+      // A stated size settles what the value is, so the veto steps aside — and
+      // a wrong reading would be caught by the length check rather than stored.
+      it('decodes a vetoed value as bytes when content_length says so', async () => {
+        const call = await runUpload('my-notes', { content_length: 6 })
+        expect(call?.[1]).toBeInstanceOf(Buffer)
+        expect((call?.[1] as Buffer).length).toBe(6)
+        expect(fs.createReadStream).not.toHaveBeenCalled()
+      })
+
+      // Documented residual, unchanged by this fix and not chased further: a
+      // 3-12 byte payload of random binary whose base64 is all lowercase and
+      // unpadded reads as a name and is refused. The bytes are junk to look at
+      // either way; the message says how to send them regardless.
+      it.each(['/nly', 'wrg0rimc', '4168s7itdlg/dset'])(
+        'refuses the genuine but unprovable short binary payload %s',
+        async (encoded) => {
+          expect(encoded.length % 4).toBe(0)
+          expect(encoded).not.toMatch(/[A-Z+=]/)
+          await expect(runUpload(encoded)).rejects.toThrow(/no such file on the machine running this server/)
+        },
+      )
+
+      it('prefers an existing file over the veto, so a real path always wins', async () => {
+        pathExistsOnce()
+        const stream = { pipe: vi.fn() }
+        vi.mocked(fs.createReadStream).mockReturnValue(stream as any)
+        const call = await runUpload('my-notes')
+        expect(fs.createReadStream).toHaveBeenCalledWith('my-notes')
+        expect(call?.[1]).toBe(stream)
       })
     })
 
