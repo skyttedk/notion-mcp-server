@@ -243,6 +243,37 @@ The guard tests live in `src/openapi-mcp-server/client/__tests__/comment-attachm
 `src/openapi-mcp-server/openapi/__tests__/notion-spec.snapshot.test.ts` - if a
 bump drops a patch, those fail rather than the capability disappearing quietly.
 
+### Telling inline bytes from a file path (`isBareBase64`)
+
+A `file` parameter reaches a hosted deployment as one string, and nothing in the
+protocol says whether it names a path or *is* the bytes. `isBareBase64` in
+`http-client.ts` decides, and every time it has guessed "path" for real base64
+the caller got `no such file on the machine running this server` - a filesystem
+error about a value that never named a file, and one that reads as "attaching a
+file does not work". Three dimensions have each caused that incident in turn:
+whitespace (encoders wrap their output), the alphabet (base64url spells the same
+bytes with `-`/`_`), and **length**.
+
+The length rule accepted a multiple of four, or 100+ characters. An encoder that
+omits the padding leaves 4n+2 or 4n+3 characters, so a small file - the common
+case for base64url, and for standard base64 piped through `tr -d '='` - matched
+neither and was refused. Those two lengths are now accepted too, unless the value
+`looksLikeWrittenName`: it contains a `/`, or it carries neither an uppercase
+letter nor a `+`. Filenames are lowercase words and separators; base64 over real
+file bytes almost always has an uppercase letter or a `+`, and the odds compound
+with every group. A 4n+1 length stays a path - no encoder can emit one.
+
+**The widening is deliberately additive: the guard decides only the two newly
+admitted lengths.** Extending it to the 4n case would also veto genuine
+all-lowercase base64 of a few bytes (~3% of 6-byte payloads, ~12% of 3-byte
+ones), and `/` is a legal standard-base64 character, so the `/` clause would
+reject roughly one short payload in eight. Both are live paths. The residual
+false positive it leaves - a 4n-length lowercase extensionless name such as
+`my-notes`, decoded to junk bytes when no such file exists - predates this fix
+and is pinned by a test that says so. An existing file on disk always wins over
+the base64 reading either way, so stdio callers passing real paths are untouched
+whatever the name looks like.
+
 ### The lockfile trap: optional platform packages with their own dependencies
 
 npm prunes the dependencies of optional platform-specific packages it did not
