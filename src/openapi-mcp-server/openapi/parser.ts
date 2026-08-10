@@ -21,6 +21,25 @@ export const FILE_PARAM_DESCRIPTION =
   'file contents as a data: URI, a bare base64 string, or an http(s) URL the server can fetch; ' +
   'a local file path works only when the server runs on the same machine as the caller (stdio)'
 
+/**
+ * Fork fix (cache isolation): a cached schema is copied on the way in and on
+ * the way out, so the object stored under a cache key is never the object any
+ * caller holds.
+ *
+ * Callers of `convertOpenApiSchemaToJsonSchema` write into what they get back —
+ * `convertOperationToMCPMethod` sets `.description` on a parameter schema, and
+ * `extractResponseSchema` does the same on a response schema. Handing out the
+ * stored reference means the second of those writes lands in the cache and is
+ * then served to every other tool that resolves the same `$ref`, with nothing
+ * at the mutation site to hint at it.
+ *
+ * A deep copy is required rather than a spread: schemas nest (`properties`,
+ * `items`, `oneOf`/`anyOf`/`allOf`), and a shallow copy would still share every
+ * subtree. `structuredClone` is a Node built-in (17+) and these are plain JSON
+ * data, so it needs no helper of our own.
+ */
+const copySchema = (schema: IJsonSchema): IJsonSchema => structuredClone(schema)
+
 export class OpenAPIToMCPConverter {
   private schemaCache: Record<string, IJsonSchema> = {}
   private nameCounter: number = 0
@@ -92,7 +111,7 @@ export class OpenAPIToMCPConverter {
       const cacheKey = `${resolveRefs ? 'inline' : 'ref'}:${ref}`
       const cached = this.schemaCache[cacheKey]
       if (cached) {
-        return cached
+        return copySchema(cached)
       }
 
       // `resolvedRefs` is the third input, and it cannot go in the key: it is
@@ -113,7 +132,10 @@ export class OpenAPIToMCPConverter {
       } else {
         const converted = this.convertOpenApiSchemaToJsonSchema(resolved, resolvedRefs, resolveRefs)
         if (this.cycleCuts === cutsBefore) {
-          this.schemaCache[cacheKey] = converted
+          // Store a copy, not `converted` itself: the caller is about to be
+          // handed `converted`, and whatever it does to it must not reach the
+          // next caller through the cache.
+          this.schemaCache[cacheKey] = copySchema(converted)
         }
 
         return converted
