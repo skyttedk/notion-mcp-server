@@ -312,8 +312,22 @@ export class MCPProxy {
     Object.entries(this.tools).forEach(([toolName, def]) => {
       def.methods.forEach((method) => {
         const fullName = `${toolName}-${method.name}`
+        const listedName = this.truncateToolName(fullName)
         this.inputSchemas[fullName] = method.inputSchema
-        this.inputSchemas[this.truncateToolName(fullName)] = method.inputSchema
+        this.inputSchemas[listedName] = method.inputSchema
+        // `tools/list` advertises `listedName`, so that is the spelling a call
+        // arrives under — but `openApiLookup` is keyed by the full name only.
+        // Without an alias, any tool whose name exceeds 64 characters is listed
+        // and then rejected with "Method not found": a dead end, since the
+        // caller is using the exact name it was just shown. No Notion operation
+        // id is long enough to trigger this today, so the alias is what keeps
+        // the two sides consistent as the API grows longer ones.
+        //
+        // Guarded so an alias never shadows a real full-name entry: a distinct
+        // tool whose full name is exactly 64 characters owns that key outright.
+        if (listedName !== fullName && this.openApiLookup[fullName] && !(listedName in this.openApiLookup)) {
+          this.openApiLookup[listedName] = this.openApiLookup[fullName]
+        }
       })
     })
 

@@ -30,7 +30,12 @@ not reproduce:
 - Multipart/file-upload operations mapped to local-file-path string params
   (`parser.ts` binary handling, `file-upload.ts`).
 - 64-char tool-name truncation with a uniqueness suffix (`parser.ts`,
-  `ensureUniqueName`).
+  `ensureUniqueName`). Note this bounds the *operation* name only; `proxy.ts`
+  truncates again once the `API-` prefix is added (`truncateToolName`), so the
+  name `tools/list` advertises can still differ from the full one. The proxy
+  constructor therefore registers both spellings in `openApiLookup` and
+  `inputSchemas` — drop the alias and any tool over 64 characters is listed but
+  fails to be called with "Method not found".
 
 ## Changing it safely
 
