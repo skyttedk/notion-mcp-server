@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { MCPProxy } from '../proxy'
 import { OpenAPIV3 } from 'openapi-types'
-import { HttpClient } from '../../client/http-client'
+import { HttpClient, HttpClientError } from '../../client/http-client'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 
@@ -117,6 +117,58 @@ describe('MCPProxy', () => {
           },
         ],
       })
+    })
+
+    it('leads a rejected write with the specific mismatch, not the list of alternatives', async () => {
+      // Verbatim from Notion for a block whose `type` is not a real block type:
+      // 34 alternatives, none of which mentions the offending key.
+      const notionMessage = [
+        'body failed validation. Fix one:',
+        ...['embed', 'bookmark', 'image', 'paragraph', 'callout'].map(
+          (key) => `body.children[0].${key} should be defined, instead was \`undefined\`.`,
+        ),
+      ].join('\n')
+      // HttpClientError is auto-mocked here, so its constructor assigns nothing —
+      // set the fields the handler reads explicitly.
+      const httpError = new HttpClientError('Bad Request', 400, undefined) as any
+      httpError.status = 400
+      httpError.data = {
+        object: 'error',
+        status: 400,
+        code: 'validation_error',
+        message: notionMessage,
+        request_id: 'req-1',
+      }
+      ;(HttpClient.prototype.executeOperation as ReturnType<typeof vi.fn>).mockRejectedValue(httpError)
+      ;(proxy as any).openApiLookup = {
+        'API-patch-block-children': {
+          operationId: 'patch-block-children',
+          responses: { '200': { description: 'Success' } },
+          method: 'patch',
+          path: '/v1/blocks/{block_id}/children',
+        },
+      }
+
+      const server = (proxy as any).server
+      const handlers = server.setRequestHandler.mock.calls.flatMap((x: unknown[]) => x).filter((x: unknown) => typeof x === 'function')
+      const callToolHandler = handlers[1]
+
+      const result = await callToolHandler({
+        params: {
+          name: 'API-patch-block-children',
+          arguments: { block_id: 'abc', children: [{ object: 'block', type: 'note', note: { rich_text: [] } }] },
+        },
+      })
+
+      const body = JSON.parse(result.content[0].text)
+      const firstLine = body.message.split('\n')[0]
+
+      expect(firstLine).toContain('body.children[0]')
+      expect(firstLine).toContain('Sent keys: object, type, note (type: "note")')
+      expect(firstLine).not.toContain('Fix one')
+      expect(body.message.split('\n')).toHaveLength(2)
+      // every other field of Notion's body is passed through untouched
+      expect(body).toMatchObject({ object: 'error', code: 'validation_error', request_id: 'req-1' })
     })
 
     it('should throw error for non-existent operation', async () => {
