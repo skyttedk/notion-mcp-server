@@ -261,6 +261,74 @@ describe('HttpClient File Upload', () => {
       })
     })
 
+    // The length dimension of the defect the base64url block above fixes for
+    // the alphabet. An encoder that omits the padding leaves 4n+2 or 4n+3
+    // characters, which under 100 characters satisfied neither length clause,
+    // so a small file came back as "no such file on the machine running this
+    // server" — a filesystem error for a value that never named a file.
+    describe('short unpadded payloads', () => {
+      const unpadded = (buf: Buffer) => buf.toString('base64').replace(/=+$/, '')
+
+      it('round-trips a short unpadded standard-base64 payload', async () => {
+        const bytes = Buffer.from('Ten bytes!') // 10 bytes -> 14 characters once the padding is dropped
+        const encoded = unpadded(bytes)
+        expect(encoded.length).toBeLessThan(100)
+        expect(encoded.length % 4).not.toBe(0)
+
+        const call = await runUpload(encoded)
+        expect(call?.[1]).toBeInstanceOf(Buffer)
+        expect((call?.[1] as Buffer).equals(bytes)).toBe(true)
+        expect(fs.createReadStream).not.toHaveBeenCalled()
+      })
+
+      it('round-trips a short unpadded base64url payload', async () => {
+        const bytes = Buffer.concat([Buffer.from('Note'), Buffer.from([0xff, 0xbf, 0xff])]) // 7 bytes -> 10 characters
+        const encoded = unpadded(bytes).replace(/\+/g, '-').replace(/\//g, '_')
+        expect(encoded).toMatch(/[-_]/)
+        expect(encoded.length).toBeLessThan(100)
+        expect(encoded.length % 4).not.toBe(0)
+
+        const call = await runUpload(encoded)
+        expect((call?.[1] as Buffer).equals(bytes)).toBe(true)
+        expect(fs.createReadStream).not.toHaveBeenCalled()
+      })
+
+      // The reason the widened length is guarded rather than free: these are the
+      // values it would otherwise decode into junk bytes and upload as if they
+      // were the file. A lowercase word, with or without path segments, is a
+      // name someone typed — not the output of an encoder.
+      it.each(['report', 'notes-2', 'docs/report'])('still resolves the hand-written name %s as a path', async (name) => {
+        await expect(runUpload(name)).rejects.toThrow(/no such file on the machine running this server/)
+        expect(fs.createReadStream).not.toHaveBeenCalled()
+      })
+
+      // No base64 encoder can emit a 4n+1-length value, so that length is never
+      // a payload however much it looks like one.
+      it('still resolves a 4n+1-length value as a path', async () => {
+        expect('Abcde'.length % 4).toBe(1)
+        await expect(runUpload('Abcde')).rejects.toThrow(/no such file on the machine running this server/)
+      })
+
+      it('prefers an existing file over decoding it, even when its name reads as base64', async () => {
+        pathExistsOnce()
+        const stream = { pipe: vi.fn() }
+        vi.mocked(fs.createReadStream).mockReturnValue(stream as any)
+        const call = await runUpload('Report') // 6 characters, uppercase: base64-shaped by the rule above
+        expect(fs.createReadStream).toHaveBeenCalledWith('Report')
+        expect(call?.[1]).toBe(stream)
+      })
+
+      // Documented limitation, deliberately left as it was. A 4n-length name is
+      // accepted by the pre-existing length clause, and vetoing it there would
+      // also veto genuine all-lowercase base64 of a few bytes — a live path,
+      // unlike this one. The widening in this fix does not reach it.
+      it('reads a 4n-length lowercase name as base64, exactly as before this fix', async () => {
+        const call = await runUpload('my-notes')
+        expect(call?.[1]).toBeInstanceOf(Buffer)
+        expect(fs.createReadStream).not.toHaveBeenCalled()
+      })
+    })
+
     // Length is no longer the signal, so an existing file must still win —
     // otherwise a stdio path made only of base64 characters would be decoded.
     it('prefers a local file that actually exists over reading it as base64', async () => {

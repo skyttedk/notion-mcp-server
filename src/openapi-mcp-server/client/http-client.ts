@@ -56,6 +56,21 @@ function toStandardBase64(compact: string): string {
  * Both alphabets count. A base64url payload used to match neither pattern, so
  * it fell through to the path branch and came back as "no such file" — an error
  * about the filesystem for a value that never named a file.
+ *
+ * The alphabet was only half the problem: the length rule missed the same case.
+ * A short file encoded WITHOUT padding — what most base64url encoders emit, and
+ * what `-w0 | tr -d '='` style pipelines produce for standard base64 too — has a
+ * length of 4n+2 or 4n+3, so under 100 characters it satisfied neither clause and
+ * was reported as a missing file. Those two lengths are therefore accepted as
+ * well, guarded by `looksLikeWrittenName` below.
+ *
+ * Deliberately additive: every value accepted before is still accepted, exactly
+ * as before, and the guard only decides the newly-admitted lengths. Applying it
+ * to the 4n case as well would have vetoed genuine short base64 that happens to
+ * be all lowercase — about 3% of 6-byte payloads, and 12% of 3-byte ones — which
+ * is a live path, whereas the name it would protect (`my-notes`, length 8) is a
+ * hypothetical one. That residual false positive is unchanged from before this
+ * fix, not introduced by it.
  */
 function isBareBase64(source: string): boolean {
   const compact = source.replace(/\s+/g, '')
@@ -63,7 +78,33 @@ function isBareBase64(source: string): boolean {
   if (!BARE_BASE64_CHARS.test(compact) && !BARE_BASE64URL_CHARS.test(compact)) return false
   // The 100+ clause is the fork's original rule, kept so long payloads that
   // arrive without padding keep working.
-  return compact.length % 4 === 0 || compact.length >= 100
+  if (compact.length % 4 === 0 || compact.length >= 100) return true
+  // 4n+1 is not a length any base64 encoder can produce, so it is never a
+  // payload and always stays a path.
+  if (compact.length % 4 === 1) return false
+  return !looksLikeWrittenName(compact)
+}
+
+/**
+ * Whether a short, charset-valid value reads as a hand-written relative name
+ * (`report`, `notes-2`, `docs/report`) rather than as encoded bytes.
+ *
+ * Two signals, both cheap. A `/` says the value is spelled in path segments —
+ * `/` is a legal standard-base64 character, which is why this only ever vetoes
+ * the newly-admitted lengths and never a value that was accepted before. And
+ * filename words are lowercase, digits and separators, while base64 over real
+ * file bytes almost always carries an uppercase letter or a `+` (three quarters
+ * of a random 4-character group do, and the odds compound with every group).
+ *
+ * The remaining false negative — an all-lowercase 4n+2/4n+3 payload — behaves
+ * exactly as it did before this fix, i.e. it is reported as a missing file, with
+ * a message that names the accepted input forms. The false positive it prevents
+ * is worse: an extensionless name that does not exist would be decoded to junk
+ * bytes and uploaded as if it were the file. An existing file on disk always
+ * wins over either reading, so stdio callers are untouched.
+ */
+function looksLikeWrittenName(compact: string): boolean {
+  return compact.includes('/') || !/[A-Z+]/.test(compact)
 }
 
 /**
