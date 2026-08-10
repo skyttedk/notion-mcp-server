@@ -63,6 +63,21 @@ all of them** - re-apply after every bump:
   corrected in one call, a to-do ticked with its wording intact, the mismatch
   400 observed). Guarded by
   `src/openapi-mcp-server/client/__tests__/update-block.test.ts`.
+- **The shapes `API-patch-block-children` documents:** the spec named only four
+  block types - `paragraph`, `bulleted_list_item`, `image`, `file`. Headings,
+  to-dos, code blocks and quotes went through anyway, but only because
+  `withStringFallback` widens every array item with a permissive
+  `{object, additionalProperties: true}` branch, so nothing in the tool told a
+  caller what shape those needed and getting one right was guesswork answered by
+  a live 400. `heading_1`..`heading_3` (sharing `headingBlockContentRequest`),
+  `to_do`, `code` and `quote` are now named schemas beside the original four,
+  and the operation says how a block object is put together. Purely additive:
+  the catch-all still carries `numbered_list_item`, `toggle`, `callout`,
+  `divider` and anything Notion adds later. Note the deliberate difference from
+  `API-update-a-block`: appending requires `rich_text` (a block with no text is
+  an empty line), whereas an edit does not (a to-do's box can be ticked without
+  rewriting its wording). Guarded by
+  `src/openapi-mcp-server/client/__tests__/append-block-children.test.ts`.
 - **The 2000-character limit, stated:** both comment tools now say that Notion
   caps `text.content` at 2000 characters and the `rich_text` array at 100 runs.
   The cap is **per run, not per comment** (verified against the live API: two
