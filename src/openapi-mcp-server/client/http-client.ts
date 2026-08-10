@@ -64,21 +64,32 @@ function toStandardBase64(compact: string): string {
  * was reported as a missing file. Those two lengths are therefore accepted as
  * well, guarded by `looksLikeWrittenName` below.
  *
- * Deliberately additive: every value accepted before is still accepted, exactly
- * as before, and the guard only decides the newly-admitted lengths. Applying it
- * to the 4n case as well would have vetoed genuine short base64 that happens to
- * be all lowercase — about 3% of 6-byte payloads, and 12% of 3-byte ones — which
- * is a live path, whereas the name it would protect (`my-notes`, length 8) is a
- * hypothetical one. That residual false positive is unchanged from before this
- * fix, not introduced by it.
+ * The one case the length rule still got wrong was the 4n one it had always
+ * accepted outright: a short lowercase extensionless name whose length happens
+ * to be a multiple of four (`my-notes`) is charset-valid base64, so it was
+ * decoded to junk bytes and uploaded as if it were the file — a silent success
+ * where the caller had simply mistyped a path. `readsAsMistypedName` now vetoes
+ * that narrow shape, and only that shape; see its own note for the boundaries.
+ *
+ * `sizeDeclared` switches the new veto off. A caller who states `content_length`
+ * has said the value is the bytes and how many there are, which settles the
+ * question outright — and a wrong guess would be caught by the length check
+ * anyway, rather than being stored.
+ *
+ * Deliberately additive: the only value that stops being read as base64 is one
+ * inside the new veto's shape, and an existing file on disk still wins over
+ * either reading, so stdio callers are untouched.
  */
-function isBareBase64(source: string): boolean {
+function isBareBase64(source: string, sizeDeclared = false): boolean {
   const compact = source.replace(/\s+/g, '')
   if (compact.length === 0) return false
   if (!BARE_BASE64_CHARS.test(compact) && !BARE_BASE64URL_CHARS.test(compact)) return false
+  // A multiple of four is what every encoder emits, so it stays the primary
+  // accept path — minus the mistyped-name shape.
+  if (compact.length % 4 === 0) return sizeDeclared || !readsAsMistypedName(compact)
   // The 100+ clause is the fork's original rule, kept so long payloads that
   // arrive without padding keep working.
-  if (compact.length % 4 === 0 || compact.length >= 100) return true
+  if (compact.length >= 100) return true
   // 4n+1 is not a length any base64 encoder can produce, so it is never a
   // payload and always stays a path.
   if (compact.length % 4 === 1) return false
@@ -86,22 +97,120 @@ function isBareBase64(source: string): boolean {
 }
 
 /**
+ * The longest value the mistyped-name veto will consider — 16 characters, i.e.
+ * 12 decoded bytes.
+ *
+ * The cap is what keeps the veto away from real payloads. `looksLikeWrittenName`
+ * reads "no uppercase and no `+`" as a name, which is sound for base64 over
+ * random bytes (the odds compound with every group) but NOT for structured
+ * binary: this repo's own base64url fixture, 24 bytes of `0xff 0xef 0xbf`,
+ * encodes to 32 all-lowercase characters and is a genuine payload. Payloads that
+ * regular are never 12 bytes long, while a mistyped path is a short word — so
+ * the two populations separate on length, and the veto takes the short side.
+ */
+const MISTYPED_NAME_MAX_LENGTH = 16
+
+/**
+ * Whether a 4n-length value reads as a name someone typed rather than as bytes.
+ *
+ * Four conditions, all required, and each one exists to keep a real payload out:
+ * the value is short (see the cap above), carries no `=` padding (padding is an
+ * encoder's signature and no part of a filename), `looksLikeWrittenName`, and
+ * does not decode to anything that looks like content. The last is the one that
+ * saves the genuine short payloads the earlier fix protected by leaving the 4n
+ * case alone: an all-lowercase 4-character group over printable text or a known
+ * file header still decodes to plausible content and is accepted.
+ *
+ * What it costs: a genuinely random binary payload of 3-12 bytes whose base64 is
+ * all lowercase and unpadded now comes back as "no such file" instead of being
+ * uploaded. That is roughly 12% of 3-byte payloads and 3% of 6-byte ones, and
+ * the error message names the remedy (padding, a data: URI, or content_length).
+ * The trade is deliberate: those bytes are never a file anyone meant to attach,
+ * whereas silently uploading junk under a mistyped name reports success for work
+ * that never happened.
+ */
+function readsAsMistypedName(compact: string): boolean {
+  if (compact.length > MISTYPED_NAME_MAX_LENGTH) return false
+  if (compact.includes('=')) return false
+  if (!looksLikeWrittenName(compact)) return false
+  return !decodesToPlausibleContent(compact)
+}
+
+/**
+ * Byte prefixes that identify a file outright. Only formats small enough to
+ * plausibly arrive as a dozen bytes of header are worth listing; anything larger
+ * is past the cap above and never reaches this test.
+ */
+const CONTENT_MAGIC_PREFIXES: readonly (readonly number[])[] = [
+  [0x89, 0x50, 0x4e, 0x47], // PNG
+  [0xff, 0xd8, 0xff], // JPEG
+  [0x47, 0x49, 0x46, 0x38], // GIF8
+  [0x25, 0x50, 0x44, 0x46], // %PDF
+  [0x50, 0x4b, 0x03, 0x04], // ZIP, and every format built on it
+  [0x50, 0x4b, 0x05, 0x06], // empty ZIP
+  [0xef, 0xbb, 0xbf], // UTF-8 BOM
+]
+
+/** The share of a decoded text that must be printable for it to read as content. */
+const PRINTABLE_CONTENT_RATIO = 0.87
+
+/**
+ * Whether the decoded bytes look like something a caller would attach: a known
+ * file header, or text that is valid UTF-8 and overwhelmingly printable.
+ *
+ * A heuristic, not a proof, and deliberately a cheap one — no entropy scoring.
+ * It only ever has to separate two populations at fewer than a dozen bytes: the
+ * bytes of a real payload, and the arbitrary high-byte rubbish a filename
+ * decodes to (`my-notes` is `9b 2f a7 a2 d7 ac`, which is not even valid UTF-8).
+ */
+function decodesToPlausibleContent(compact: string): boolean {
+  let buf: Buffer
+  try {
+    buf = Buffer.from(toStandardBase64(compact), 'base64')
+  } catch {
+    return false
+  }
+  if (buf.length === 0) return false
+  if (CONTENT_MAGIC_PREFIXES.some((magic) => magic.every((byte, i) => buf[i] === byte))) return true
+  let text: string
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(buf)
+  } catch {
+    // Not valid UTF-8, and not a header we know: nothing here reads as content.
+    return false
+  }
+  const chars = [...text]
+  const printable = chars.filter((ch) => {
+    const code = ch.codePointAt(0) ?? 0
+    return code === 0x09 || code === 0x0a || code === 0x0d || (code >= 0x20 && code !== 0x7f)
+  }).length
+  return chars.length > 0 && printable / chars.length >= PRINTABLE_CONTENT_RATIO
+}
+
+/**
  * Whether a short, charset-valid value reads as a hand-written relative name
  * (`report`, `notes-2`, `docs/report`) rather than as encoded bytes.
  *
  * Two signals, both cheap. A `/` says the value is spelled in path segments —
- * `/` is a legal standard-base64 character, which is why this only ever vetoes
- * the newly-admitted lengths and never a value that was accepted before. And
- * filename words are lowercase, digits and separators, while base64 over real
- * file bytes almost always carries an uppercase letter or a `+` (three quarters
- * of a random 4-character group do, and the odds compound with every group).
+ * `/` is a legal standard-base64 character, so on its own it proves nothing.
+ * And filename words are lowercase, digits and separators, while base64 over
+ * real file bytes almost always carries an uppercase letter or a `+` (three
+ * quarters of a random 4-character group do, and the odds compound with every
+ * group).
  *
- * The remaining false negative — an all-lowercase 4n+2/4n+3 payload — behaves
- * exactly as it did before this fix, i.e. it is reported as a missing file, with
- * a message that names the accepted input forms. The false positive it prevents
- * is worse: an extensionless name that does not exist would be decoded to junk
- * bytes and uploaded as if it were the file. An existing file on disk always
- * wins over either reading, so stdio callers are untouched.
+ * Neither signal is strong enough to decide alone. On the 4n+2/4n+3 lengths it
+ * decides anyway, because those lengths were refused outright before they were
+ * admitted, so a veto there can only restore the old answer. On the 4n length —
+ * accepted since the fork's first version — it is one of four conditions in
+ * `readsAsMistypedName`, which also requires the value to be short, unpadded and
+ * to decode to nothing content-shaped.
+ *
+ * The remaining false negative — an all-lowercase 4n+2/4n+3 payload — is
+ * reported as a missing file, with a message that names the accepted input
+ * forms. The false positive it prevents is worse: an extensionless name that
+ * does not exist would be decoded to junk bytes and uploaded as if it were the
+ * file. An existing file on disk always wins over either reading, so stdio
+ * callers are untouched.
  */
 function looksLikeWrittenName(compact: string): boolean {
   return compact.includes('/') || !/[A-Z+]/.test(compact)
@@ -697,10 +806,15 @@ export class HttpClient {
           // value can be opened at all.
           const existsLocally = localFileExists(source)
 
+          // A stated size says the value is the bytes, and how many — so the
+          // mistyped-name veto has nothing left to decide, and a wrong reading
+          // would be caught by the length check rather than stored.
+          const sizeDeclared = declaredLength !== undefined
+
           // Bare base64, of any length: a tiny file's base64 is only a few
           // characters, so length cannot be the signal. An existing file on
           // disk still wins, which keeps stdio paths working.
-          if (isBareBase64(source) && !existsLocally) {
+          if (isBareBase64(source, sizeDeclared) && !existsLocally) {
             appendBuffer(decodeBase64Payload(source), undefined, source)
             return
           }
@@ -715,11 +829,21 @@ export class HttpClient {
           // attaching a file is impossible. Which it is not; it just cannot be
           // done by path against a server hosted somewhere else.
           if (!existsLocally) {
+            // Say so when the value would have been read as bytes but for the
+            // mistyped-name veto. Without this the caller of a short unpadded
+            // lowercase payload gets a filesystem error with no way to tell
+            // that a padded version of the same string would be accepted.
+            const vetoedAsName = !sizeDeclared && isBareBase64(source, true)
             throw new UploadSourceError(
               `Cannot read '${describeSource(source)}': no such file on the machine running this server. ` +
                 `This server does not share a filesystem with you unless it runs locally over stdio, so a path ` +
                 `to your own machine cannot be opened here. Send the contents instead — a data: URI ` +
-                `('data:<mime>;base64,<...>'), a bare base64 string, or an http(s) URL this server can fetch.`,
+                `('data:<mime>;base64,<...>'), a bare base64 string, or an http(s) URL this server can fetch.` +
+                (vetoedAsName
+                  ? ` If this value was meant as the bytes themselves, it is too short and too filename-like to ` +
+                    `be told apart from a name: send it with its base64 padding, as a data: URI, or alongside ` +
+                    `content_length, and it will be read as bytes.`
+                  : ''),
             )
           }
           measurable = false
