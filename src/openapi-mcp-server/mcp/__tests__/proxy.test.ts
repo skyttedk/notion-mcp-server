@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { MCPProxy } from '../proxy'
 import { OpenAPIV3 } from 'openapi-types'
 import { HttpClient } from '../../client/http-client'
@@ -1014,6 +1016,123 @@ describe('MCPProxy', () => {
         expect.anything(),
         { count: '123', flag: 'true', quoted: '"hello"' },
       )
+    })
+  })
+
+  /**
+   * Fork fix guard: the unwrap above must be schema-aware.
+   *
+   * Deciding purely on how a string *looks* meant a Notion paragraph quoting a
+   * JSON snippet was decoded into an object and rejected by Notion with
+   * "…should be a string". These cases run against the real bundled spec — the
+   * schema clients are actually shown — so both halves are pinned: a
+   * string-typed field keeps whatever text it was given, and a genuinely
+   * double-serialized object/array is still decoded.
+   */
+  describe('schema-aware unwrapping (fork fix)', () => {
+    const specPath = path.resolve(process.cwd(), 'scripts/notion-openapi.json')
+    const notionSpec = JSON.parse(fs.readFileSync(specPath, 'utf-8')) as OpenAPIV3.Document
+
+    let callToolHandler: Function
+
+    beforeEach(() => {
+      ;(HttpClient.prototype.executeOperation as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: { ok: true },
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+      })
+
+      const specProxy = new MCPProxy('notion-spec-proxy', notionSpec)
+      const server = (specProxy as any).server
+      const handlers = server.setRequestHandler.mock.calls.flatMap((x: unknown[]) => x).filter((x: unknown) => typeof x === 'function')
+      callToolHandler = handlers[handlers.length - 1]
+    })
+
+    const paramsSentFor = async (name: string, args: Record<string, unknown>) => {
+      await callToolHandler({ params: { name, arguments: args } })
+      const calls = (HttpClient.prototype.executeOperation as ReturnType<typeof vi.fn>).mock.calls
+      return calls[calls.length - 1]![1]
+    }
+
+    const paragraph = (content: string) => [
+      { type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content } }] } },
+    ]
+
+    const contentSent = (params: any) => params.children[0].paragraph.rich_text[0].text.content
+
+    it('keeps JSON-shaped paragraph text a string (the reported 400)', async () => {
+      const text = '{"status": "shipped", "retries": 1}'
+      const params = await paramsSentFor('API-patch-block-children', {
+        block_id: 'block-1',
+        children: paragraph(text),
+      })
+
+      expect(contentSent(params)).toBe(text)
+    })
+
+    it('keeps array-shaped paragraph text a string', async () => {
+      const text = '[1, 2]'
+      const params = await paramsSentFor('API-patch-block-children', {
+        block_id: 'block-1',
+        children: paragraph(text),
+      })
+
+      expect(contentSent(params)).toBe(text)
+    })
+
+    it('keeps the quotes on quoted paragraph text', async () => {
+      const text = '"quoted text"'
+      const params = await paramsSentFor('API-patch-block-children', {
+        block_id: 'block-1',
+        children: paragraph(text),
+      })
+
+      expect(contentSent(params)).toBe(text)
+    })
+
+    it('still decodes a whole children array sent as a JSON string', async () => {
+      const params = await paramsSentFor('API-patch-block-children', {
+        block_id: 'block-1',
+        children: JSON.stringify(paragraph('plain text')),
+      })
+
+      expect(Array.isArray(params.children)).toBe(true)
+      expect(contentSent(params)).toBe('plain text')
+    })
+
+    it('still decodes a single child sent as a JSON string inside the array', async () => {
+      const params = await paramsSentFor('API-patch-block-children', {
+        block_id: 'block-1',
+        children: [JSON.stringify(paragraph('plain text')[0])],
+      })
+
+      expect(params.children[0]).toEqual(paragraph('plain text')[0])
+    })
+
+    it('still decodes a stringified object property on another tool', async () => {
+      const params = await paramsSentFor('API-post-page', {
+        parent: JSON.stringify({ page_id: 'page-1' }),
+        properties: JSON.stringify({ title: [{ text: { content: 'hi' } }] }),
+      })
+
+      expect(params.parent).toEqual({ page_id: 'page-1' })
+      expect(params.properties).toEqual({ title: [{ text: { content: 'hi' } }] })
+    })
+
+    // The documented limit of the fix, pinned so a future change to it is a
+    // deliberate one: `properties` on API-post-page is `additionalProperties:
+    // true` — the spec describes nothing below it — so that subtree keeps the
+    // eager decode rather than silently regressing issues #176/#208 for every
+    // free-form map. Text that must survive verbatim goes in a block, where the
+    // schema is precise.
+    it('still decodes eagerly where the spec describes nothing (free-form map)', async () => {
+      const text = '{"looks": "like json"}'
+      const params = await paramsSentFor('API-post-page', {
+        parent: { page_id: 'page-1' },
+        properties: { title: [{ text: { content: text } }] },
+      })
+
+      expect(params.properties.title[0].text.content).toEqual({ looks: 'like json' })
     })
   })
 })
