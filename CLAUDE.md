@@ -199,6 +199,22 @@ only a ref elsewhere (a Swagger-style `#/definitions/...`) falls through to it.
 `parser-schema-cache.test.ts` exercises both on that path. The dead `refSchema`
 that upstream built beside the lookup and never read is gone with it.
 
+**And the cache never shares an object.** It used to store what it returned and
+return what it stored, so a caller writing into its result wrote into the cache
+- and callers do write into it: `convertOperationToMCPMethod` sets
+`.description` on a parameter schema, `extractResponseSchema` on a response
+schema. One such write would then be served to every other tool resolving the
+same ref, with nothing at the mutation site pointing at the cause. Reads and
+writes now go through `copySchema` (`structuredClone`; a spread would still
+share every nested `properties`/`items`/`oneOf` subtree), so the stored object
+is never the object anyone holds. **Identity is no longer evidence of a cache
+hit** - the "converted once" test counts `internalResolveRef` calls instead.
+The clone costs nothing on the Notion spec today: measured over a full
+`convertToMCPTools()`, the cache takes 0 entries and serves 0 hits, for the
+`#/components/schemas/` reason above. A spec that does reach it pays one deep
+copy per hit, which is the intended trade - a shared reference is wrong, and
+cheaply so.
+
 **Both spec fields reach the agent.** Upstream built a tool's description from
 `summary || description`, and every Notion operation has a `summary` - so every
 word written in `description` was dropped before any agent saw it, including the

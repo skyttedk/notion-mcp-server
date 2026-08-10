@@ -443,6 +443,17 @@ function describeRefusal(status: number, body: unknown): string | null {
   )
 }
 
+/**
+ * Fork addition (`created_after` on `retrieve-a-comment`): how many pages of
+ * comments this server will walk on the caller's behalf before giving up.
+ * 20 pages x the 100-comment maximum = 2000 comments. Past that we refuse
+ * rather than return a partial answer: a filtered list that silently stopped
+ * early is indistinguishable from "nothing new was said", which is exactly the
+ * question the parameter exists to answer.
+ */
+export const COMMENT_SCAN_MAX_PAGES = 20
+const COMMENT_SCAN_PAGE_SIZE = 100
+
 export class HttpClientError extends Error {
   constructor(
     message: string,
@@ -781,6 +792,83 @@ export class HttpClient {
   }
 
   /**
+   * Fork addition: serve `retrieve-a-comment`'s `created_after` filter.
+   *
+   * Notion's `GET /v1/comments` has exactly three query parameters (`block_id`,
+   * `start_cursor`, `page_size`) — no sort, no filter — and returns comments
+   * oldest first. So "has anything been said since I last looked?" costs a walk
+   * of the whole thread on every check. `created_after` is this server's own
+   * parameter: it is stripped from the outgoing request (Notion has never heard
+   * of it), the thread is walked here, and only the newer comments come back,
+   * in the ordinary list envelope so callers need no special handling.
+   *
+   * A caller-supplied `start_cursor` is honoured as the starting point; the
+   * page size is forced to the maximum, since paging in smaller steps only
+   * costs more round trips for the same answer.
+   */
+  private async listCommentsCreatedAfter<T = any>(
+    operation: OpenAPIV3.OperationObject & { method: string; path: string },
+    params: Record<string, any>,
+  ): Promise<HttpClientResponse<T>> {
+    const rawCreatedAfter = params.created_after
+    const threshold = Date.parse(String(rawCreatedAfter))
+    if (Number.isNaN(threshold)) {
+      // A timestamp we cannot read would compare false against every comment
+      // and hand back an empty list — "no new comments" for what is really a
+      // typo. Say so instead.
+      throw new Error(
+        `created_after must be an ISO-8601 date-time (e.g. 2026-08-10T03:11:00.000Z); received ${JSON.stringify(rawCreatedAfter)}.`,
+      )
+    }
+
+    // Never send our own parameter to Notion.
+    const pageParams: Record<string, any> = { ...params }
+    delete pageParams.created_after
+    pageParams.page_size = COMMENT_SCAN_PAGE_SIZE
+
+    const matched: any[] = []
+    let cursor: string | undefined = typeof params.start_cursor === 'string' ? params.start_cursor : undefined
+
+    for (let page = 0; page < COMMENT_SCAN_MAX_PAGES; page++) {
+      if (cursor === undefined) {
+        delete pageParams.start_cursor
+      } else {
+        pageParams.start_cursor = cursor
+      }
+
+      // Recurses into the ordinary path — `created_after` is gone, so this
+      // cannot come back here.
+      const response: HttpClientResponse<any> = await this.executeOperation<any>(operation, pageParams)
+
+      const body: any = response.data ?? {}
+      for (const comment of Array.isArray(body.results) ? body.results : []) {
+        const created = Date.parse(String(comment?.created_time))
+        // An entry whose timestamp we cannot read is kept: we cannot prove it
+        // is old, and showing one comment too many is recoverable while
+        // hiding one is not.
+        if (Number.isNaN(created) || created > threshold) {
+          matched.push(comment)
+        }
+      }
+
+      if (!body.has_more || typeof body.next_cursor !== 'string') {
+        return {
+          ...response,
+          data: { ...body, results: matched, has_more: false, next_cursor: null } as T,
+        }
+      }
+      cursor = body.next_cursor
+    }
+
+    throw new Error(
+      `created_after: this thread has more than ${COMMENT_SCAN_MAX_PAGES * COMMENT_SCAN_PAGE_SIZE} comments, ` +
+        `which is past the limit this server will scan. No result is returned, because a partially scanned ` +
+        `thread cannot be told apart from one with nothing new in it. Page through it with start_cursor and ` +
+        `page_size instead, without created_after.`,
+    )
+  }
+
+  /**
    * Execute an OpenAPI operation
    */
   async executeOperation<T = any>(
@@ -791,6 +879,12 @@ export class HttpClient {
     const operationId = operation.operationId
     if (!operationId) {
       throw new Error('Operation ID is required')
+    }
+
+    // Fork addition: `created_after` is filtered by this server, not by Notion.
+    // Absent, the code below is exactly upstream's single unpaged request.
+    if (operationId === 'retrieve-a-comment' && params.created_after !== undefined && params.created_after !== null) {
+      return this.listCommentsCreatedAfter<T>(operation, params)
     }
 
     // Handle file uploads if present

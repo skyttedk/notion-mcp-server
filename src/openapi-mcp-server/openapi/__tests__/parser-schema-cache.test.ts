@@ -109,10 +109,52 @@ describe('resolved-schema cache', () => {
 
   it('still caches, so a repeated ref in the same mode is converted once', () => {
     const converter = new OpenAPIToMCPConverter(spec)
+    // Identity is no longer the evidence of a cache hit — every read returns a
+    // copy — so count the resolutions instead: a second ask must resolve nothing.
+    const resolve = vi.spyOn(converter as any, 'internalResolveRef')
 
     const first = converter.convertOpenApiSchemaToJsonSchema(wrapperRef, new Set(), true)
+    const afterFirst = resolve.mock.calls.length
     const second = converter.convertOpenApiSchemaToJsonSchema(wrapperRef, new Set(), true)
 
-    expect(second).toBe(first)
+    expect(afterFirst).toBeGreaterThan(0)
+    expect(resolve.mock.calls.length).toBe(afterFirst)
+    expect(second).toEqual(first)
+  })
+
+  /**
+   * The cache used to hand every caller the same object. Callers write into
+   * what they get back — `convertOperationToMCPMethod` sets `.description` on a
+   * parameter schema, `extractResponseSchema` does the same on a response
+   * schema — so one such write landed in the cache and was then served to every
+   * other tool resolving the same ref.
+   */
+  describe('is isolated from what callers do to the schema they get', () => {
+    it('does not let a mutation of one read reach the next one', () => {
+      const converter = new OpenAPIToMCPConverter(spec)
+
+      const first = converter.convertOpenApiSchemaToJsonSchema(wrapperRef, new Set(), true)
+      first.description = 'mutated'
+      ;(first.properties!.leaf as Record<string, unknown>).description = 'mutated nested'
+
+      const second = converter.convertOpenApiSchemaToJsonSchema(wrapperRef, new Set(), true)
+
+      expect(second).not.toBe(first)
+      expect(second.description).toBeUndefined()
+      expect(second.properties!.leaf).not.toHaveProperty('description')
+    })
+
+    it('does not let a mutation of the first, uncached read reach the cache', () => {
+      const converter = new OpenAPIToMCPConverter(spec)
+
+      // The very first call is the one that fills the cache; if it stores the
+      // object it returns, the mutation below is written straight into it.
+      const first = converter.convertOpenApiSchemaToJsonSchema(wrapperRef, new Set(), true)
+      first.description = 'mutated'
+
+      const second = converter.convertOpenApiSchemaToJsonSchema(wrapperRef, new Set(), true)
+
+      expect(second.description).toBeUndefined()
+    })
   })
 })
