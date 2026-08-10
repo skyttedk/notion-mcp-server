@@ -220,6 +220,16 @@ dependency that ships an optional platform-specific package carrying its own
 dependencies brings the wall straight back, and the fix is the same: delete
 `package-lock.json` and regenerate rather than hunting the named package.
 
+### `npm audit` is blind to prerelease-tagged versions
+
+A clean `npm audit` here does not mean the tree is clean. `multer@1.4.5-lts.1`
+sat in `devDependencies` with 8 HIGH GitHub advisories against that exact
+version, and audit reported 0 vulnerabilities the whole time: the `-lts.1`
+prerelease suffix falls outside npm's semver range matching, so the advisory
+ranges never match. It was unimported dead weight from the vendored bootstrap
+commit and was removed 2026-08-10. When checking dependencies, cross-check any
+version carrying a prerelease tag against the registry or OSV directly.
+
 ### Tool Generation Flow
 
 1. `OpenAPIToMCPConverter.convertToMCPTools()` iterates all paths/operations
