@@ -3,6 +3,7 @@ import { CallToolRequestSchema, JSONRPCResponse, ListToolsRequestSchema, Tool } 
 import { JSONSchema7 as IJsonSchema } from 'json-schema'
 import { OpenAPIToMCPConverter } from '../openapi/parser'
 import { HttpClient, HttpClientError } from '../client/http-client'
+import { formatValidationError } from './validation-error'
 import { OpenAPIV3 } from 'openapi-types'
 import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 
@@ -384,7 +385,10 @@ export class MCPProxy {
         console.error('Error in tool call', error instanceof Error ? error.message : 'Unknown error')
         if (error instanceof HttpClientError) {
           console.error('HttpClientError encountered, returning structured error', { status: error.status })
-          const data = error.data?.response?.data ?? error.data ?? {}
+          const raw = error.data?.response?.data ?? error.data ?? {}
+          // Notion's union validation errors bury the actual mistake in a list
+          // of every variant it tried — lead with the mismatch instead.
+          const data = formatValidationError(raw, deserializedParams)
           return {
             content: [
               {
