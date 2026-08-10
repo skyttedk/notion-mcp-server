@@ -95,7 +95,43 @@ Code-side fork fixes are marked with a `Fork fix`/`Fork guard` comment in
 `src/openapi-mcp-server/client/http-client.ts` (remote-source `prepareFileUpload`,
 content-type preservation, truncated-upload guard, incomplete-payload guard) and
 in `src/openapi-mcp-server/openapi/parser.ts` (tool descriptions carry both
-`summary` and `description`; `$defs` pruning, below).
+`summary` and `description`; `$defs` pruning, below) and in
+`src/openapi-mcp-server/mcp/proxy.ts` (schema-aware JSON unwrapping, below).
+
+### JSON-looking text stays text (schema-aware unwrapping)
+
+`deserializeParams` in `proxy.ts` decodes double-serialized parameters, the
+upstream workaround for clients that send nested objects as JSON strings
+(issues #176/#208). It used to walk the argument tree schema-blind: *any* string
+that trimmed to `{...}` or `[...]` was `JSON.parse`d and, if it decoded to a
+container, replaced by it. So a paragraph whose text merely quoted a JSON
+snippet became an object, and Notion rejected the append with
+"…should be a string" - correctly, since `richTextRequest.text.content` really
+is `type: string`. Appending `[1, 2]` as text had the same fate.
+
+The walk is now guided by the tool's own `inputSchema`: a string is decoded only
+where the schema at that exact path permits an object or an array. `$ref`s are
+followed into the tool's (pruned) `$defs` and `anyOf`/`oneOf`/`allOf` are
+expanded, so `blockObjectRequest`'s four branches resolve.
+
+Two things to know before touching it:
+
+- **The string branch is not evidence.** `withStringFallback` in `parser.ts`
+  wraps every complex top-level property in `anyOf: [complex, {type: string}]`
+  precisely so a double-serialized object passes validation. Reading that as
+  "the schema wants a string here" would disable the unwrap everywhere. The
+  question asked is therefore "can this position hold structure?", never "does
+  some branch allow a string?".
+- **A position no schema describes keeps the old eager behaviour**, so #176/#208
+  still work for free-form maps - notably `properties` on `API-post-page`, which
+  the spec declares `additionalProperties: true`. Text that must survive
+  verbatim belongs in a block, where the schema is precise. When descending into
+  a key, branches that *name* the property win over a sibling
+  `additionalProperties: true` branch; without that rule the converter's own
+  catch-all item branch would make every key unconstrained again.
+
+`proxy.test.ts` → `schema-aware unwrapping (fork fix)` pins both directions
+against the real bundled spec, including that free-form limit.
 
 ### `$defs` carries only what a tool can reach
 

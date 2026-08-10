@@ -24,6 +24,17 @@ type NewToolDefinition = {
 }
 
 /**
+ * A position in the argument tree, expressed as the schema branches that may
+ * apply there. `undefined` means "no schema describes this position" — the
+ * signal to fall back to the schema-blind behaviour that predates the fork fix
+ * below.
+ */
+type SchemaCandidates = IJsonSchema[] | undefined
+
+/** How deep `$ref`/`anyOf` expansion may go before it gives up. */
+const MAX_SCHEMA_DEPTH = 12
+
+/**
  * Recursively deserialize stringified JSON values in parameters.
  * This handles the case where MCP clients (like Cursor, Claude Code, and some
  * SDKs) double-serialize nested object/array parameters, sending them as JSON
@@ -37,12 +48,33 @@ type NewToolDefinition = {
  * JSON-encoded more than once (e.g. `JSON.stringify(JSON.stringify(parent))`) —
  * before the request is forwarded to the Notion API.
  *
+ * Fork fix (schema-aware unwrapping): the walk is guided by the tool's own
+ * `inputSchema` instead of being schema-blind. Upstream decoded *any* string
+ * that looked like JSON, wherever it sat, so ordinary prose that happens to
+ * start with `{` and end with `}` — a Notion paragraph quoting a JSON snippet —
+ * was turned into an object and Notion rejected the request with
+ * "…should be a string". Sibling symptoms: `[1, 2]` typed into a text field
+ * became an array. A string is now decoded only where the schema actually
+ * permits an object or array; where it permits only a string (e.g.
+ * `richTextRequest.text.content`) it is forwarded untouched. Positions no
+ * schema describes keep the old eager behaviour, so the double-serialization
+ * fix is preserved for anything untyped.
+ *
+ * NB: the string branch that `withStringFallback` (parser.ts) adds to every
+ * complex property cannot be read as "the schema wants a string here" — it
+ * exists precisely to let a double-serialized object through validation. That
+ * is why the test below is "does this position permit structure?" and not
+ * "does any branch permit a string?".
+ *
  * @see https://github.com/makenotion/notion-mcp-server/issues/176
  */
-function deserializeParams(params: Record<string, unknown>): Record<string, unknown> {
+function deserializeParams(params: Record<string, unknown>, inputSchema?: IJsonSchema): Record<string, unknown> {
+  const defs = (inputSchema?.$defs ?? {}) as Record<string, IJsonSchema>
+  const root: SchemaCandidates = inputSchema ? expandBranches([inputSchema], defs) : undefined
+
   const result: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(params)) {
-    result[key] = deserializeValue(value)
+    result[key] = deserializeValue(value, propertyCandidates(root, key, defs), defs)
   }
   return result
 }
@@ -54,24 +86,137 @@ function deserializeParams(params: Record<string, unknown>): Record<string, unkn
  * scalars are returned unchanged, so values the schema legitimately wants as
  * strings (and numbers/booleans encoded as strings) are left intact.
  */
-function deserializeValue(value: unknown): unknown {
+function deserializeValue(value: unknown, candidates: SchemaCandidates, defs: Record<string, IJsonSchema>): unknown {
   if (typeof value === 'string') {
-    return unwrapJsonString(value)
+    // The one place the schema changes the outcome: a string stays a string
+    // unless this position can hold an object or an array.
+    if (candidates && !allowsStructured(candidates)) {
+      return value
+    }
+    return unwrapJsonString(value, candidates, defs)
   }
 
   if (Array.isArray(value)) {
-    return value.map(deserializeValue)
+    const items = itemCandidates(candidates, defs)
+    return value.map((entry) => deserializeValue(entry, items, defs))
   }
 
   if (typeof value === 'object' && value !== null) {
     const result: Record<string, unknown> = {}
     for (const [key, nested] of Object.entries(value)) {
-      result[key] = deserializeValue(nested)
+      result[key] = deserializeValue(nested, propertyCandidates(candidates, key, defs), defs)
     }
     return result
   }
 
   return value
+}
+
+/**
+ * Flatten a set of schemas to the leaf branches a value could match: `$ref`s
+ * are followed into the tool's `$defs` and `anyOf`/`oneOf`/`allOf` are
+ * expanded. `allOf` members are treated as alternatives rather than as an
+ * intersection — the only questions asked of the result are "can this hold
+ * structure?" and "which sub-schema describes key X?", and both are answered
+ * the same way by either reading.
+ */
+function expandBranches(schemas: IJsonSchema[], defs: Record<string, IJsonSchema>, depth = 0): IJsonSchema[] {
+  if (depth >= MAX_SCHEMA_DEPTH) {
+    return schemas
+  }
+
+  const out: IJsonSchema[] = []
+  for (const schema of schemas) {
+    if (!schema || typeof schema !== 'object') {
+      continue
+    }
+
+    const ref = (schema as { $ref?: string }).$ref
+    if (ref) {
+      const target = defs[ref.replace(/^#\/(?:\$defs|components\/schemas)\//, '')]
+      // An unresolvable ref describes nothing; dropping it leaves the position
+      // schema-less, which falls back to the legacy behaviour.
+      if (target) {
+        out.push(...expandBranches([target], defs, depth + 1))
+      }
+      continue
+    }
+
+    const union = [
+      ...((schema.anyOf ?? []) as IJsonSchema[]),
+      ...((schema.oneOf ?? []) as IJsonSchema[]),
+      ...((schema.allOf ?? []) as IJsonSchema[]),
+    ]
+    if (union.length > 0) {
+      out.push(...expandBranches(union, defs, depth + 1))
+      continue
+    }
+
+    out.push(schema)
+  }
+  return out
+}
+
+/** True when at least one branch can hold an object or an array. */
+function allowsStructured(candidates: IJsonSchema[]): boolean {
+  return candidates.some((schema) => {
+    const type = schema.type
+    if (type) {
+      const types = Array.isArray(type) ? type : [type]
+      return types.includes('object') || types.includes('array')
+    }
+    // Untyped but shaped like a container, or wholly unconstrained (`{}`) —
+    // in which case nothing is known and the eager default applies.
+    return (
+      schema.properties !== undefined ||
+      schema.items !== undefined ||
+      schema.additionalProperties !== undefined ||
+      Object.keys(schema).length === 0
+    )
+  })
+}
+
+/**
+ * The schemas that describe `key` inside the given object positions. Branches
+ * that name the property win outright: a sibling `additionalProperties: true`
+ * branch (the converter adds one to array items) would otherwise make every
+ * key unconstrained and defeat the whole check.
+ */
+function propertyCandidates(candidates: SchemaCandidates, key: string, defs: Record<string, IJsonSchema>): SchemaCandidates {
+  if (!candidates) {
+    return undefined
+  }
+
+  const named = candidates
+    .map((schema) => schema.properties?.[key])
+    .filter((schema): schema is IJsonSchema => typeof schema === 'object' && schema !== null)
+  if (named.length > 0) {
+    return expandBranches(named, defs)
+  }
+
+  const additional = candidates.map((schema) => schema.additionalProperties).filter((schema) => schema !== undefined && schema !== false)
+  if (additional.length === 0 || additional.some((schema) => schema === true || (typeof schema === 'object' && Object.keys(schema).length === 0))) {
+    // Either nothing describes this key, or it is described as "anything".
+    return undefined
+  }
+  return expandBranches(additional as IJsonSchema[], defs)
+}
+
+/** The schemas that describe the elements of the given array positions. */
+function itemCandidates(candidates: SchemaCandidates, defs: Record<string, IJsonSchema>): SchemaCandidates {
+  if (!candidates) {
+    return undefined
+  }
+
+  const items = candidates
+    .map((schema) => schema.items)
+    // Tuple-typed `items` (an array of schemas) is not used by the Notion spec;
+    // leaving it undescribed keeps the legacy behaviour rather than guessing.
+    .filter((schema): schema is IJsonSchema => typeof schema === 'object' && schema !== null && !Array.isArray(schema))
+  if (items.length === 0) {
+    return undefined
+  }
+  return expandBranches(items, defs)
 }
 
 // Bound how many JSON-decode passes we attempt on a single string. One pass
@@ -86,7 +231,7 @@ const MAX_UNWRAP_DEPTH = 3
  * scalar (number/boolean/null) or to another plain string is returned
  * unchanged, so genuine string values are never corrupted.
  */
-function unwrapJsonString(value: string): unknown {
+function unwrapJsonString(value: string, candidates: SchemaCandidates, defs: Record<string, IJsonSchema>): unknown {
   let current = value
   for (let depth = 0; depth < MAX_UNWRAP_DEPTH; depth++) {
     const trimmed = current.trim()
@@ -109,7 +254,8 @@ function unwrapJsonString(value: string): unknown {
     }
 
     if (typeof parsed === 'object' && parsed !== null) {
-      return deserializeValue(parsed)
+      // The decoded value occupies the same schema position as the string did.
+      return deserializeValue(parsed, candidates, defs)
     }
     if (typeof parsed === 'string') {
       // Peeled one layer of JSON-string encoding; loop to see whether it wraps
@@ -129,6 +275,12 @@ export class MCPProxy {
   private httpClient: HttpClient
   private tools: Record<string, NewToolDefinition>
   private openApiLookup: Record<string, OpenAPIV3.OperationObject & { method: string; path: string }>
+  /**
+   * Tool name -> the schema clients were shown for it, keyed under both the
+   * full name and the truncated one `tools/list` advertises, so a call arrives
+   * under either spelling and still finds its schema. See `deserializeParams`.
+   */
+  private inputSchemas: Record<string, IJsonSchema>
 
   /**
    * @param headers Notion API headers to authenticate with. When omitted, the
@@ -155,6 +307,14 @@ export class MCPProxy {
     const { tools, openApiLookup } = converter.convertToMCPTools()
     this.tools = tools
     this.openApiLookup = openApiLookup
+    this.inputSchemas = {}
+    Object.entries(this.tools).forEach(([toolName, def]) => {
+      def.methods.forEach((method) => {
+        const fullName = `${toolName}-${method.name}`
+        this.inputSchemas[fullName] = method.inputSchema
+        this.inputSchemas[this.truncateToolName(fullName)] = method.inputSchema
+      })
+    })
 
     this.setupHandlers()
   }
@@ -202,9 +362,10 @@ export class MCPProxy {
         throw new Error(`Method ${name} not found`)
       }
 
-      // Deserialize any stringified JSON parameters (fixes double-serialization bug)
+      // Deserialize any stringified JSON parameters (fixes double-serialization bug),
+      // guided by the tool's own schema so string-typed fields stay strings.
       // See: https://github.com/makenotion/notion-mcp-server/issues/176
-      const deserializedParams = params ? deserializeParams(params as Record<string, unknown>) : {}
+      const deserializedParams = params ? deserializeParams(params as Record<string, unknown>, this.inputSchemas[name]) : {}
 
       try {
         // Execute the operation
