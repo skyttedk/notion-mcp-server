@@ -456,6 +456,7 @@ Error Responses:
     "name": "retrieve-a-comment",
     "properties": [
       "block_id",
+      "created_after",
       "page_size",
       "start_cursor",
     ],
