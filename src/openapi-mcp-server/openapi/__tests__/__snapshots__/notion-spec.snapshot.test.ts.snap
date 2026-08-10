@@ -327,6 +327,7 @@ Error Responses:
   },
   {
     "description": "Notion | Append block children
+Each entry in \`children\` is one new block: an object whose single property is named after the block's type and carries that type's content, e.g. \`{"heading_2": {"rich_text": [{"text": {"content": "…"}}]}}\` or \`{"to_do": {"rich_text": [{"text": {"content": "…"}}], "checked": true}}\`. Blocks are appended to the end of the page unless \`after\` names the block to put them behind. Appending only ever adds — to change text that is already on the page use API-update-a-block, which keeps the block's id and its comments.
 Returns:
 A paginated list. While \`has_more\` is true, pass \`next_cursor\` back as \`start_cursor\` to get the following page.
 Fields: object: string, results: array of object, next_cursor: string, has_more: boolean, type: string, request_id: string

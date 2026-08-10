@@ -1018,13 +1018,220 @@
         },
         "additionalProperties": false
       },
+      "headingBlockContentRequest": {
+        "type": "object",
+        "description": "The content of a heading block. Notion has exactly three heading levels — `heading_1` is the largest — and no `heading_4`.",
+        "properties": {
+          "rich_text": {
+            "type": "array",
+            "description": "The heading's text, as one or more runs.",
+            "items": {
+              "$ref": "#/components/schemas/richTextRequest"
+            },
+            "maxItems": 100
+          },
+          "color": {
+            "type": "string",
+            "description": "Text or background colour, e.g. `default`, `gray`, `blue`, `red_background`. Left out, the heading is `default`."
+          },
+          "is_toggleable": {
+            "type": "boolean",
+            "description": "True makes the heading a collapsible toggle. Defaults to false."
+          }
+        },
+        "required": [
+          "rich_text"
+        ],
+        "additionalProperties": false
+      },
+      "heading1BlockRequest": {
+        "description": "A level-1 heading, the largest of Notion's three heading sizes.",
+        "type": "object",
+        "properties": {
+          "heading_1": {
+            "$ref": "#/components/schemas/headingBlockContentRequest"
+          },
+          "type": {
+            "enum": [
+              "heading_1"
+            ],
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "heading2BlockRequest": {
+        "description": "A level-2 heading.",
+        "type": "object",
+        "properties": {
+          "heading_2": {
+            "$ref": "#/components/schemas/headingBlockContentRequest"
+          },
+          "type": {
+            "enum": [
+              "heading_2"
+            ],
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "heading3BlockRequest": {
+        "description": "A level-3 heading, the smallest of Notion's three heading sizes.",
+        "type": "object",
+        "properties": {
+          "heading_3": {
+            "$ref": "#/components/schemas/headingBlockContentRequest"
+          },
+          "type": {
+            "enum": [
+              "heading_3"
+            ],
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "toDoBlockRequest": {
+        "description": "A to-do block: a line of text with a checkbox in front of it.",
+        "type": "object",
+        "properties": {
+          "to_do": {
+            "type": "object",
+            "properties": {
+              "rich_text": {
+                "type": "array",
+                "description": "The to-do's text, as one or more runs.",
+                "items": {
+                  "$ref": "#/components/schemas/richTextRequest"
+                },
+                "maxItems": 100
+              },
+              "checked": {
+                "type": "boolean",
+                "description": "Whether the box is already ticked when the block is created. Defaults to false."
+              },
+              "color": {
+                "type": "string",
+                "description": "Text or background colour, e.g. `default`, `gray`, `blue`, `red_background`."
+              }
+            },
+            "required": [
+              "rich_text"
+            ],
+            "additionalProperties": false
+          },
+          "type": {
+            "enum": [
+              "to_do"
+            ],
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "codeBlockRequest": {
+        "description": "A code block. The code itself is plain text in `rich_text` — Notion does not parse it, so send it exactly as it should appear, newlines and all.",
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "object",
+            "properties": {
+              "rich_text": {
+                "type": "array",
+                "description": "The code, as one or more runs. A run's `text.content` caps at 2000 characters, so a longer listing goes into several runs here rather than being cut.",
+                "items": {
+                  "$ref": "#/components/schemas/richTextRequest"
+                },
+                "maxItems": 100
+              },
+              "language": {
+                "type": "string",
+                "description": "Which language to highlight as — one of Notion's supported names, e.g. `plain text`, `bash`, `json`, `javascript`, `typescript`, `python`, `sql`, `yaml`, `markdown`, `diff`. Spelled in lower case, and `plain text` has a space, not an underscore. An unsupported name is rejected with a 400 validation error. Left out, the block is `plain text`."
+              },
+              "caption": {
+                "type": "array",
+                "description": "An optional caption shown under the code block.",
+                "items": {
+                  "$ref": "#/components/schemas/richTextRequest"
+                },
+                "maxItems": 100
+              }
+            },
+            "required": [
+              "rich_text"
+            ],
+            "additionalProperties": false
+          },
+          "type": {
+            "enum": [
+              "code"
+            ],
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "quoteBlockRequest": {
+        "description": "A quote block: text set off behind a vertical rule.",
+        "type": "object",
+        "properties": {
+          "quote": {
+            "type": "object",
+            "properties": {
+              "rich_text": {
+                "type": "array",
+                "description": "The quoted text, as one or more runs.",
+                "items": {
+                  "$ref": "#/components/schemas/richTextRequest"
+                },
+                "maxItems": 100
+              },
+              "color": {
+                "type": "string",
+                "description": "Text or background colour, e.g. `default`, `gray`, `blue`, `red_background`."
+              }
+            },
+            "required": [
+              "rich_text"
+            ],
+            "additionalProperties": false
+          },
+          "type": {
+            "enum": [
+              "quote"
+            ],
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "blockObjectRequest": {
+        "description": "One block to append. Each block is an object carrying a single property named after the block's type, e.g. `{\"heading_2\": {\"rich_text\": [{\"text\": {\"content\": \"…\"}}]}}`. The types spelled out here are the common ones; any other type Notion supports (`numbered_list_item`, `toggle`, `callout`, `divider`, `table`, …) is still accepted and must follow the shape in Notion's block reference.",
         "anyOf": [
           {
             "$ref": "#/components/schemas/paragraphBlockRequest"
           },
           {
+            "$ref": "#/components/schemas/heading1BlockRequest"
+          },
+          {
+            "$ref": "#/components/schemas/heading2BlockRequest"
+          },
+          {
+            "$ref": "#/components/schemas/heading3BlockRequest"
+          },
+          {
             "$ref": "#/components/schemas/bulletedListItemBlockRequest"
+          },
+          {
+            "$ref": "#/components/schemas/toDoBlockRequest"
+          },
+          {
+            "$ref": "#/components/schemas/quoteBlockRequest"
+          },
+          {
+            "$ref": "#/components/schemas/codeBlockRequest"
           },
           {
             "$ref": "#/components/schemas/imageBlockRequest"
@@ -2208,7 +2415,7 @@
       },
       "patch": {
         "summary": "Append block children",
-        "description": "",
+        "description": "Each entry in `children` is one new block: an object whose single property is named after the block's type and carries that type's content, e.g. `{\"heading_2\": {\"rich_text\": [{\"text\": {\"content\": \"…\"}}]}}` or `{\"to_do\": {\"rich_text\": [{\"text\": {\"content\": \"…\"}}], \"checked\": true}}`. Blocks are appended to the end of the page unless `after` names the block to put them behind. Appending only ever adds — to change text that is already on the page use API-update-a-block, which keeps the block's id and its comments.",
         "operationId": "patch-block-children",
         "parameters": [
           {
@@ -2238,7 +2445,7 @@
                     "items": {
                       "$ref": "#/components/schemas/blockObjectRequest"
                     },
-                    "description": "Child content to append to a container block as an array of [block objects](ref:block)"
+                    "description": "The blocks to append, in the order they should appear. Paragraphs, the three heading levels, bulleted list items, to-dos, quotes, code blocks, images and files are spelled out below; any other type Notion supports is still accepted and follows the shape in its [block reference](ref:block)."
                   },
                   "after": {
                     "type": "string",
