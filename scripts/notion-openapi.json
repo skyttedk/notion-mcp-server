@@ -2926,6 +2926,14 @@
             }
           },
           {
+            "name": "created_after",
+            "in": "query",
+            "description": "Return only comments created strictly after this moment, as an ISO-8601 date-time (e.g. `2026-08-10T03:11:00.000Z`). Answers \"has anything been said since I last looked?\" in one call, instead of re-reading the thread from its first comment every time. Pass the `created_time` of the newest comment you have already seen. NOTE: this is not a parameter of Notion's API — Notion offers no sort or filter on comments — it is performed by this server, which walks the thread with `start_cursor` and returns the matching comments in the ordinary list envelope (`has_more` false, `next_cursor` null). Two consequences: the cost is paid server-side rather than saved outright, and past 2000 comments the call fails rather than answer from a partial scan. Notion records comment times to the minute, so a comment made in the same minute as the timestamp you pass is treated as older and left out; pass the newest `created_time` you hold and accept a re-read of that minute if you cannot miss one.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "$ref": "#/components/parameters/notionVersion"
           }
         ],
