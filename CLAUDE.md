@@ -148,6 +148,29 @@ Two things to know before touching it:
 `proxy.test.ts` → `schema-aware unwrapping (fork fix)` pins both directions
 against the real bundled spec, including that free-form limit.
 
+### Notion's union errors, rewritten (`mcp/validation-error.ts`)
+
+When Notion cannot tell which variant of a union was meant it answers with
+`body failed validation. Fix one:` and one line per variant - up to 34 of them,
+none naming the actual mistake. `formatValidationError` compacts that into a
+first line stating the mismatch and one trailing line of alternatives; any
+message that is already precise is returned untouched.
+
+**The `properties` map has two forms, and mixing them is what that shape usually
+means.** Notion accepts a page property wrapped (`{"Tokens": {"number": 4}}`)
+*or* in shorthand (`{"Tokens": 4}`, `{"Priority": {"name": "Low"}}`) - and
+validates the **whole map** in one form or the other. One `API-patch-page` call
+carrying both therefore 400s, blaming whichever entry is *wrapped* and listing
+the shorthand union's keys (`id, name, start, lat, state` - a select option, a
+date, a location, a verification), which describe neither the property sent nor
+the shorthand entry that actually caused it. Verified against the live API
+2026-08-13: wrapped + wrapped succeeds, shorthand + shorthand succeeds, only the
+mix fails. `explainMixedPropertyForms` recognises it from the arguments sent and
+names both properties and both ways out. The detection is deliberately
+conservative - `null`, `undefined` and `{}` count as neither form, since clearing
+a property looks the same either way - so an unrecognised case falls back to the
+generic summary rather than inventing a mix.
+
 ### `$defs` carries only what a tool can reach
 
 `convertOperationToMCPMethod` used to set every tool's `$defs` to the spec's

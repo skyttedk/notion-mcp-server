@@ -90,6 +90,106 @@ function describeSent(value: unknown): string | null {
 }
 
 /**
+ * Keys Notion uses to *wrap* a page property value: `{"Tokens": {"number": 4}}`.
+ * The same value may also be sent in Notion's shorthand form, `{"Tokens": 4}`,
+ * and a select's shorthand is `{"name": "Low"}` — see
+ * {@link explainMixedPropertyForms}.
+ */
+const PROPERTY_TYPE_KEYS = new Set([
+  'title',
+  'rich_text',
+  'number',
+  'select',
+  'multi_select',
+  'status',
+  'date',
+  'people',
+  'files',
+  'checkbox',
+  'url',
+  'email',
+  'phone_number',
+  'formula',
+  'relation',
+  'rollup',
+  'created_time',
+  'created_by',
+  'last_edited_time',
+  'last_edited_by',
+  'unique_id',
+  'verification',
+  'button',
+  'location',
+  'place',
+])
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** `{"select": {...}}`, or `{"type": "select", "select": {...}}`. */
+function isWrappedPropertyValue(value: unknown): boolean {
+  if (!isPlainObject(value)) return false
+  const keys = Object.keys(value)
+  return keys.some((k) => PROPERTY_TYPE_KEYS.has(k)) && keys.every((k) => k === 'type' || PROPERTY_TYPE_KEYS.has(k))
+}
+
+/**
+ * A value that can only be the shorthand form. `null`, `undefined` and `{}` are
+ * deliberately not evidence either way — clearing a property is spelled the same
+ * in both forms, so counting them would invent a mix that isn't there.
+ */
+function isShorthandPropertyValue(value: unknown): boolean {
+  if (value === null || value === undefined) return false
+  if (!isPlainObject(value)) return Array.isArray(value) ? value.length > 0 : true
+  const keys = Object.keys(value)
+  return keys.length > 0 && !keys.some((k) => PROPERTY_TYPE_KEYS.has(k))
+}
+
+/**
+ * Notion accepts a page's `properties` map in two forms — wrapped
+ * (`{"Tokens": {"number": 4}}`) and shorthand (`{"Tokens": 4}`) — and validates
+ * the *whole map* in one of them. Mixing them in a single `API-patch-page` or
+ * `API-post-page` call therefore fails, and the failure lands on a **wrapped**
+ * entry with the shorthand union's discriminating keys listed as the
+ * alternatives: `body.properties.Status ... Expected one of: id, name, start,
+ * lat, state`. That list belongs to a select option, a date and a location; it
+ * says nothing about the property that was sent, and nothing at all about the
+ * shorthand entry that actually caused it. Verified against the live API
+ * 2026-08-13: wrapped + wrapped succeeds, shorthand + shorthand succeeds, the
+ * mix 400s and names whichever entry is wrapped.
+ *
+ * Returns the two-line replacement when the sent arguments show exactly that
+ * mix, otherwise `null` so the generic summary stands.
+ */
+function explainMixedPropertyForms(prefix: string, params: unknown, accepted: string[]): string | null {
+  const segments = prefix.split('.')
+  if (segments.length !== 3 || segments[0] !== 'body' || segments[1] !== 'properties') return null
+  const key = segments[2]
+
+  const properties = valueAtPath(params, 'body.properties')
+  if (!isPlainObject(properties)) return null
+
+  const failing = properties[key]
+  if (!isWrappedPropertyValue(failing)) return null
+
+  const shorthand = Object.keys(properties).filter((k) => k !== key && isShorthandPropertyValue(properties[k]))
+  if (shorthand.length === 0) return null
+
+  const type = Object.keys(failing as Record<string, unknown>).find((k) => PROPERTY_TYPE_KEYS.has(k))
+  const others = shorthand.join(', ')
+  const verb = shorthand.length === 1 ? 'is' : 'are'
+
+  return [
+    `body failed validation: ${prefix} was sent in the wrapped form ({"${type}": ...}), while ${others} in the same ` +
+      `\`properties\` map ${verb} in Notion's shorthand form. Notion validates the whole map in one form or the other, ` +
+      `so the wrapped entry is the one it rejected — the mix is the mistake, not ${key} itself.`,
+    `Fix: use one form for every entry — wrap the shorthand ones ("${shorthand[0]}": {"<its property type>": ...}), ` +
+      `or send ${key} shorthand instead (one of: ${accepted.join(', ')}).`,
+  ].join('\n')
+}
+
+/**
  * Rewrite a Notion `validation_error` message so the specific mismatch comes
  * first. Any message that is not the multi-alternative shape is returned
  * unchanged — single-mismatch messages are already precise.
@@ -130,6 +230,10 @@ export function formatValidationErrorMessage(message: string, params?: unknown):
   // them names the mistake: the key that WAS sent is not a known one.
   const prefix = commonPrefix(alternatives.map((a) => a.path))
   const accepted = alternatives.map((a) => a.path.slice(prefix.length + 1)).filter(Boolean)
+
+  const mixedForms = explainMixedPropertyForms(prefix, params, accepted)
+  if (mixedForms) return mixedForms
+
   const sent = describeSent(valueAtPath(params, prefix))
   const target = prefix || 'the request body'
 
