@@ -408,8 +408,11 @@ export class MCPProxy {
               {
                 type: 'text',
                 text: JSON.stringify({
-                  status: 'error', // TODO: get this from http status code?
                   ...(typeof data === 'object' ? data : { data: data }),
+                  // Fork fix: the marker goes last. Notion's own body carries a
+                  // numeric `status` (e.g. 400), so spreading it over the marker
+                  // overwrote it and no reply ever said "error".
+                  status: 'error',
                 }),
               },
             ],
