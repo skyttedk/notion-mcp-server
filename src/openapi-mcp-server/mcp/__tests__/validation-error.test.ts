@@ -111,6 +111,80 @@ describe('formatValidationErrorMessage', () => {
     })
   })
 
+  /**
+   * `API-patch-page` with one wrapped property value and one shorthand one.
+   * Reconstructed from the message Notion returned for request
+   * 14d94b95-c9c4-418b-b0a7-b76e8da4b1fc: five alternatives, all under
+   * `body.properties.Status`, all abandoned for a missing key. The variants are
+   * a select option's (`id`, `name`), a date's (`start`), a location's (`lat`)
+   * and a verification's (`state`) — Notion validated the map in its shorthand
+   * form, because the sibling `Tokens` is shorthand, and so rejected the
+   * wrapped entry.
+   */
+  const MIXED_PROPERTY_FORMS_MESSAGE = [
+    'body failed validation. Fix one:',
+    ...['id', 'name', 'start', 'lat', 'state'].map(
+      (key) => `body.properties.Status.${key} should be defined, instead was \`undefined\`.`,
+    ),
+  ].join('\n')
+
+  const MIXED_PARAMS = {
+    page_id: '3bb152ed-8271-81e7-b84a-e90b041e6b44',
+    properties: { Status: { select: { name: 'In progress' } }, Tokens: 4 },
+  }
+
+  describe('a `properties` map mixing the wrapped and shorthand forms', () => {
+    const formatted = formatValidationErrorMessage(MIXED_PROPERTY_FORMS_MESSAGE, MIXED_PARAMS)
+
+    it('names both the wrapped property and the shorthand one that caused it', () => {
+      expect(formatted).toContain('body.properties.Status was sent in the wrapped form ({"select": ...})')
+      expect(formatted).toContain("while Tokens in the same `properties` map is in Notion's shorthand form.")
+    })
+
+    it('says the mix is the mistake, not the property Notion named', () => {
+      expect(formatted.split('\n')[0]).toContain('the mix is the mistake, not Status itself')
+    })
+
+    it('gives both ways out, keeping the accepted keys with the one they belong to', () => {
+      expect(formatted.split('\n')[1]).toBe(
+        'Fix: use one form for every entry — wrap the shorthand ones ("Tokens": {"<its property type>": ...}), ' +
+          'or send Status shorthand instead (one of: id, name, start, lat, state).',
+      )
+    })
+
+    it('does not present the shorthand union as what this property should have been', () => {
+      expect(formatted).not.toContain('matches none of the 5 accepted variants')
+      expect(formatted).not.toContain('Sent keys: select')
+    })
+
+    it('lists every shorthand sibling', () => {
+      const formattedTwo = formatValidationErrorMessage(MIXED_PROPERTY_FORMS_MESSAGE, {
+        properties: { Status: { select: { name: 'In progress' } }, Tokens: 4, Priority: { name: 'Low' } },
+      })
+      expect(formattedTwo.split('\n')[0]).toContain('while Tokens, Priority in the same `properties` map are')
+    })
+
+    it.each([
+      ['every entry is wrapped', { Status: { select: { name: 'x' } }, Tokens: { number: 4 } }],
+      ['the failing entry is itself shorthand', { Status: { name: 'x' }, Tokens: 4 }],
+      ['the sibling only clears a property', { Status: { select: { name: 'x' } }, Tokens: null }],
+      ['`type` rides along with the wrapper', { Status: { select: { name: 'x' } }, Tokens: { type: 'number', number: 4 } }],
+    ])('keeps the generic summary when %s', (_case, properties) => {
+      const other = formatValidationErrorMessage(MIXED_PROPERTY_FORMS_MESSAGE, { properties })
+      expect(other.split('\n')[0]).toContain('body.properties.Status matches none of the 5 accepted variants')
+    })
+
+    it('keeps the generic summary when the arguments are unavailable', () => {
+      expect(formatValidationErrorMessage(MIXED_PROPERTY_FORMS_MESSAGE).split('\n')[0]).toContain(
+        'body.properties.Status matches none of the 5 accepted variants',
+      )
+    })
+
+    it('does not fire outside a `properties` map', () => {
+      expect(formatValidationErrorMessage(UNKNOWN_BLOCK_TYPE_MESSAGE, SENT_PARAMS)).toContain('Sent keys: object, type, note')
+    })
+  })
+
   describe('messages that are already precise', () => {
     it.each([
       'body failed validation: body.children[0].to_do.checked should be a boolean or `undefined`, instead was `"yes"`.',
