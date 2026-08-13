@@ -289,6 +289,53 @@ function describeCharAt(text: string, index: number): string {
 }
 
 /**
+ * The shortest value the corrupted-base64 reading will consider. A payload that
+ * long is past any plausible hand-typed name, and short paths are the ones most
+ * likely to be mistaken for encoded bytes.
+ */
+const CORRUPT_BASE64_MIN_LENGTH = 100
+
+/** At most one character in a hundred may be foreign for the value to read as damaged base64. */
+const CORRUPT_BASE64_MAX_FOREIGN_RATIO = 0.01
+
+/**
+ * Whether a value that matched nothing reads as base64 that was damaged in
+ * transit rather than as a path — and if so, where the damage is.
+ *
+ * The detection itself is deliberately untouched (widening it risks reading a
+ * real Windows path as bytes); this only decides which error to raise once every
+ * branch has already declined the value. Without it, a payload carrying one
+ * stray character — a smart quote, a non-breaking hyphen, a NUL — falls through
+ * to the path branch and comes back as "no such file", blaming a missing file
+ * for a corrupted upload and sending the caller after a path that never existed.
+ *
+ * Five conditions, each one there to keep a genuine path out, since a path is
+ * spelled largely in base64-legal characters (`-`, `_` and `/` all are):
+ * the value is long, carries no `\` or `:` (a Windows path or a scheme), does not
+ * end in a file extension, mixes upper case, lower case and digits the way base64
+ * over real bytes does and a written path usually does not, and its foreign
+ * characters are a rounding error rather than the punctuation a path is built
+ * from. A value that fails any of them keeps the old message, so the worst case
+ * of a wrong guess here is the behaviour that shipped before.
+ */
+function readsAsCorruptedBase64(source: string): { compact: string; index: number } | null {
+  const compact = source.replace(/\s+/g, '')
+  if (compact.length < CORRUPT_BASE64_MIN_LENGTH) return null
+  if (/[\\:]/.test(compact)) return null
+  if (/\.[A-Za-z0-9]{1,8}$/.test(compact)) return null
+  if (!/[A-Z]/.test(compact) || !/[a-z]/.test(compact) || !/[0-9]/.test(compact)) return null
+  let foreign = 0
+  let first = -1
+  for (let i = 0; i < compact.length; i++) {
+    if (!NON_BASE64_CHAR.test(compact[i])) continue
+    foreign++
+    if (first < 0) first = i
+  }
+  if (first < 0) return null
+  return foreign / compact.length <= CORRUPT_BASE64_MAX_FOREIGN_RATIO ? { compact, index: first } : null
+}
+
+/**
  * Decode inline base64, refusing input that cannot be a complete payload.
  *
  * Node's base64 decoder is deliberately forgiving: it skips characters outside
@@ -829,6 +876,19 @@ export class HttpClient {
           // attaching a file is impossible. Which it is not; it just cannot be
           // done by path against a server hosted somewhere else.
           if (!existsLocally) {
+            // A damaged payload is not a missing file, and saying "no such file"
+            // for one sends the caller to look for a path they never sent.
+            const corrupted = readsAsCorruptedBase64(source)
+            if (corrupted) {
+              throw new UploadSourceError(
+                `This value was not recognised as any accepted file source: not a data: URI, not valid base64, ` +
+                  `and not a file on the machine running this server. It reads as base64 that was damaged in ` +
+                  `transit — ${describeCharAt(corrupted.compact, corrupted.index)} at character ` +
+                  `${corrupted.index} is not a base64 character, and no file is named this way. Re-encode the ` +
+                  `file and send it again, as a bare base64 string, a data: URI ('data:<mime>;base64,<...>'), ` +
+                  `or an http(s) URL this server can fetch.`,
+              )
+            }
             // Say so when the value would have been read as bytes but for the
             // mistyped-name veto. Without this the caller of a short unpadded
             // lowercase payload gets a filesystem error with no way to tell

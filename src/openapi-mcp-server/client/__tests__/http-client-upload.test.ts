@@ -427,6 +427,32 @@ describe('HttpClient File Upload', () => {
       })
     })
 
+    // A payload that lost a character in transit matches no branch at all, so it
+    // used to be reported as a missing file: an error about the filesystem for a
+    // corrupted upload, pointing the caller at a path they never sent.
+    describe('a payload that is base64 apart from one stray character', () => {
+      const damaged = () => {
+        const encoded = Buffer.from('x'.repeat(200)).toString('base64')
+        return `${encoded.slice(0, 50)}’${encoded.slice(51)}`
+      }
+
+      it('names the stray character instead of blaming a missing file', async () => {
+        const promise = runUpload(damaged())
+        await expect(promise).rejects.toThrow(/not recognised as any accepted file source/)
+        await expect(promise).rejects.toThrow(/U\+2019 at character 50 is not a base64 character/)
+        await expect(promise).rejects.not.toThrow(/no such file/)
+        expect(fs.createReadStream).not.toHaveBeenCalled()
+      })
+
+      // The detection itself is untouched, so a long path — spelled largely in
+      // base64-legal characters — must keep the filesystem message.
+      it('still reports a long real path as a missing file', async () => {
+        const path = `/home/agent/screenshots/${'a'.repeat(90)}-Shot1.png`
+        expect(path.length).toBeGreaterThan(100)
+        await expect(runUpload(path)).rejects.toThrow(/no such file on the machine running this server/)
+      })
+    })
+
     // Length is no longer the signal, so an existing file must still win —
     // otherwise a stdio path made only of base64 characters would be decoded.
     it('prefers a local file that actually exists over reading it as base64', async () => {
