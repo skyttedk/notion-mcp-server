@@ -96,6 +96,36 @@ all of them** - re-apply after every bump:
   as `Open` and makes it undraggable) and board/gallery `card_layout: "compact"` +
   `cover_size`. Guarded by `src/openapi-mcp-server/openapi/__tests__/views-api.test.ts`
   and `client/__tests__/http-client.views.test.ts`.
+- **Creating a database:** `API-create-a-database` (`POST /v1/databases`) and
+  `API-update-a-database` (`PATCH /v1/databases/{database_id}`). The bundled spec
+  had only the `get`, so the namespace could read a database and rewrite its
+  schema but never make one - which blocked provisioning a new PM board through
+  the gateway at all. The tool that looked like it should was
+  `create-a-data-source`, whose bundled description read "Create a new data
+  source (database)" and whose parent was a **page**; on API version 2025-09-03
+  and later Notion rejects exactly that shape with *"Creating new databases with
+  data sources is not supported in this endpoint. Use the Create Database API
+  instead."* So it is retitled **"Add a data source to an existing database"**
+  and now takes a **database** parent - verified against the live API 2026-08-19,
+  a database parent is accepted and a second data source really is created. The
+  create-a-database response is the existing `databaseObjectResponse`, which
+  matters: the caller needs `id` **and** `data_sources[0].id`, they are different
+  values, and `API-create-a-view` wants both. Guarded by
+  `client/__tests__/capability-gaps.test.ts` section 4.
+- **Native status properties are creatable through the API** - Notion's own
+  documentation says they are not, and that is wrong. Verified against the live
+  API 2026-08-19 on a throwaway database: `{"Stage": {"status": {}}}` in a
+  property schema creates a real native status property carrying Notion's default
+  options (Not started / In progress / Done) already sorted into the To-do /
+  In progress / Complete groups, and custom `options` keep their names and
+  colours. **Group membership is the part that does not work:** the three groups
+  are always created, but every custom option lands in To-do, and
+  `groups[].option_ids` is ignored - sent at creation *or* in a later
+  `API-update-a-data-source` call it returns 200 and changes nothing. (Adding
+  options to an already-existing status property does work, verified
+  2026-08-06.) Converting an existing select into a status stays UI-only. All of
+  this is stated in `create-a-database`'s own description, because the silence is
+  what cost every caller the same experiment - keep it there.
 
 **Views pin their own API version.** They need `2026-03-11`, while the rest of
 the server stays on `2025-09-03`. That is a per-operation `Notion-Version` header
