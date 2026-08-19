@@ -42,6 +42,8 @@ describe('successful-response documentation', () => {
     ['post-search', 'results: array of object'],
     ['retrieve-a-data-source', 'properties: object'],
     ['retrieve-a-database', 'data_sources: array of object'],
+    ['create-a-database', 'data_sources: array of object'],
+    ['update-a-database', 'data_sources: array of object'],
     ['create-a-file-upload', 'upload_url: string'],
     ['send-a-file-upload', 'content_length: integer'],
   ]

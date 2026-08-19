@@ -4,6 +4,7 @@ exports[`Notion OpenAPI spec -> MCP tools (snapshot) > generates a stable set of
 [
   "create-a-comment",
   "create-a-data-source",
+  "create-a-database",
   "create-a-file-upload",
   "create-a-view",
   "create-a-view-query",
@@ -37,6 +38,7 @@ exports[`Notion OpenAPI spec -> MCP tools (snapshot) > generates a stable set of
   "update-a-block",
   "update-a-comment",
   "update-a-data-source",
+  "update-a-database",
   "update-a-view",
   "update-page-markdown",
 ]
@@ -65,8 +67,12 @@ Error Responses:
     ],
   },
   {
-    "description": "Notion | Create a data source
-Create a new data source (database)
+    "description": "Notion | Add a data source to an existing database
+Adds another data source - another set of columns - to a database that already exists. It does NOT create a database: on API version 2025-09-03 and later Notion answers a page parent with \`Creating new databases with data sources is not supported in this endpoint. Use the Create Database API instead.\` To create a database, call API-create-a-database, which makes the database and its first data source in one go. The parent here is therefore a database id, not a page id.
+
+Most databases have exactly one data source and never need this endpoint; reach for it only when one database should hold several separate column schemas.
+
+Native status properties: \`properties\` accepts a \`status\` property and really does create one, despite Notion's documentation saying the API cannot. See API-create-a-database for exactly what survives - in short, options and their colours do, group membership does not.
 Returns:
 A data source object — the column schema behind a database. Rows are pages; query them with API-query-data-source.
 Fields: object: string, id: string, title: array of object, description: array of object, properties: object, parent: object, database_parent: object, created_time: string, last_edited_time: string, created_by: object, last_edited_by: object, icon: object, cover: object, is_inline: boolean, url: string, public_url: string, archived: boolean, in_trash: boolean, request_id: string
@@ -82,6 +88,33 @@ Error Responses:
     "required": [
       "parent",
       "properties",
+    ],
+  },
+  {
+    "description": "Notion | Create a database
+Creates a database under a page, together with its first data source, and returns BOTH ids: \`id\` is the database, \`data_sources[0].id\` is the data source. They are different values and the rest of this namespace needs both - API-create-a-view takes a database id AND a data source id, while API-query-data-source and API-update-a-data-source take the data source id alone. The database id cannot be queried for rows.
+
+An internal integration cannot create a workspace-level database, so the parent is always a page the integration has been given access to. To add a FURTHER data source to a database that already exists, use API-create-a-data-source instead.
+
+Native status properties - verified against the live API on 2026-08-19, and the answer contradicts Notion's own documentation, which says a status property cannot be created through the API. It can. \`{"Status": {"status": {}}}\` in \`initial_data_source.properties\` creates a real native status property carrying Notion's default options - Not started, In progress, Done - already sorted into the To-do / In progress / Complete groups. Custom options are honoured as well, both names and colours. What is NOT settable is group membership: the three groups are always created, but every custom option lands in To-do, and \`groups[].option_ids\` is ignored - sent here at creation or in a later API-update-a-data-source call it returns 200 and changes nothing. So send \`{"status": {}}\` when Notion's three defaults will do and the grouping matters, and send custom options when the names matter, accepting that they all sit under To-do until someone moves them in the UI. Converting an existing select property into a status is UI-only too.
+Returns:
+A database object. It holds presentation and the list of data sources; the columns live on the data source, not here.
+Fields: object: string, id: string, title: array of object, description: array of object, data_sources: array of object, parent: object, created_time: string, last_edited_time: string, icon: object, cover: object, is_inline: boolean, is_locked: boolean, url: string, public_url: string, archived: boolean, in_trash: boolean, request_id: string
+Error Responses:
+400: Bad request",
+    "httpMethod": "post",
+    "name": "create-a-database",
+    "properties": [
+      "cover",
+      "icon",
+      "initial_data_source",
+      "is_inline",
+      "parent",
+      "title",
+    ],
+    "required": [
+      "initial_data_source",
+      "parent",
     ],
   },
   {
@@ -665,6 +698,31 @@ Error Responses:
     ],
     "required": [
       "data_source_id",
+    ],
+  },
+  {
+    "description": "Notion | Update a database
+Updates a database's own attributes - title, description, icon, cover, inline rendering, lock state, and its parent (moving it under a different page). The COLUMNS are not here: they live on the data source, so a schema change goes through API-update-a-data-source with an id from \`data_sources\`. Every field is optional; only what is sent is changed.
+Returns:
+A database object. It holds presentation and the list of data sources; the columns live on the data source, not here.
+Fields: object: string, id: string, title: array of object, description: array of object, data_sources: array of object, parent: object, created_time: string, last_edited_time: string, icon: object, cover: object, is_inline: boolean, is_locked: boolean, url: string, public_url: string, archived: boolean, in_trash: boolean, request_id: string
+Error Responses:
+400: Bad request",
+    "httpMethod": "patch",
+    "name": "update-a-database",
+    "properties": [
+      "cover",
+      "database_id",
+      "description",
+      "icon",
+      "in_trash",
+      "is_inline",
+      "is_locked",
+      "parent",
+      "title",
+    ],
+    "required": [
+      "database_id",
     ],
   },
   {

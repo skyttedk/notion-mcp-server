@@ -4008,8 +4008,8 @@
     },
     "/v1/data_sources": {
       "post": {
-        "summary": "Create a data source",
-        "description": "Create a new data source (database)",
+        "summary": "Add a data source to an existing database",
+        "description": "Adds another data source - another set of columns - to a database that already exists. It does NOT create a database: on API version 2025-09-03 and later Notion answers a page parent with `Creating new databases with data sources is not supported in this endpoint. Use the Create Database API instead.` To create a database, call API-create-a-database, which makes the database and its first data source in one go. The parent here is therefore a database id, not a page id.\n\nMost databases have exactly one data source and never need this endpoint; reach for it only when one database should hold several separate column schemas.\n\nNative status properties: `properties` accepts a `status` property and really does create one, despite Notion's documentation saying the API cannot. See API-create-a-database for exactly what survives - in short, options and their colours do, group membership does not.",
         "operationId": "create-a-data-source",
         "tags": [
           "Data sources"
@@ -4030,11 +4030,26 @@
                 ],
                 "properties": {
                   "parent": {
-                    "$ref": "#/components/schemas/pageIdParentRequest"
+                    "type": "object",
+                    "description": "The existing database the new data source is added to. A page parent is rejected - use API-create-a-database for that.",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "database_id"
+                      },
+                      "database_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Identifier of the database that gains the data source. Get it from API-create-a-database, API-retrieve-a-database, or the `parent.database_id` of any data source in it."
+                      }
+                    },
+                    "required": [
+                      "database_id"
+                    ]
                   },
                   "properties": {
                     "type": "object",
-                    "description": "Property schema of data source"
+                    "description": "Property schema of the new data source - the same property-object shape API-update-a-data-source and API-create-a-database's `initial_data_source` accept, e.g. `{\"Name\": {\"title\": {}}, \"Stage\": {\"select\": {\"options\": [{\"name\": \"Open\", \"color\": \"blue\"}]}}}`. Exactly one `title` property is required."
                   },
                   "title": {
                     "type": "array",
@@ -4169,6 +4184,111 @@
         "security": []
       }
     },
+    "/v1/databases": {
+      "post": {
+        "summary": "Create a database",
+        "description": "Creates a database under a page, together with its first data source, and returns BOTH ids: `id` is the database, `data_sources[0].id` is the data source. They are different values and the rest of this namespace needs both - API-create-a-view takes a database id AND a data source id, while API-query-data-source and API-update-a-data-source take the data source id alone. The database id cannot be queried for rows.\n\nAn internal integration cannot create a workspace-level database, so the parent is always a page the integration has been given access to. To add a FURTHER data source to a database that already exists, use API-create-a-data-source instead.\n\nNative status properties - verified against the live API on 2026-08-19, and the answer contradicts Notion's own documentation, which says a status property cannot be created through the API. It can. `{\"Status\": {\"status\": {}}}` in `initial_data_source.properties` creates a real native status property carrying Notion's default options - Not started, In progress, Done - already sorted into the To-do / In progress / Complete groups. Custom options are honoured as well, both names and colours. What is NOT settable is group membership: the three groups are always created, but every custom option lands in To-do, and `groups[].option_ids` is ignored - sent here at creation or in a later API-update-a-data-source call it returns 200 and changes nothing. So send `{\"status\": {}}` when Notion's three defaults will do and the grouping matters, and send custom options when the names matter, accepting that they all sit under To-do until someone moves them in the UI. Converting an existing select property into a status is UI-only too.",
+        "operationId": "create-a-database",
+        "tags": [
+          "Databases"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/notionVersion"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "parent",
+                  "initial_data_source"
+                ],
+                "properties": {
+                  "parent": {
+                    "$ref": "#/components/schemas/pageIdParentRequest"
+                  },
+                  "title": {
+                    "type": "array",
+                    "description": "The database's title as rich text runs, e.g. `[{\"text\": {\"content\": \"PM board\"}}]`. Omitted, the database is created untitled.",
+                    "items": {
+                      "$ref": "#/components/schemas/richTextRequest"
+                    },
+                    "maxItems": 100
+                  },
+                  "initial_data_source": {
+                    "type": "object",
+                    "description": "The first data source created inside the database - i.e. the columns. Its id comes back in `data_sources[0].id`.",
+                    "properties": {
+                      "properties": {
+                        "type": "object",
+                        "description": "The column schema, in the same property-object shape API-update-a-data-source and API-create-a-data-source accept: keys are property names, values name the type and its configuration. Exactly one property must be a `title`. Example: `{\"Name\": {\"title\": {}}, \"Status\": {\"status\": {}}, \"Priority\": {\"select\": {\"options\": [{\"name\": \"High\", \"color\": \"red\"}]}}, \"Due\": {\"date\": {}}}`. Read the operation description before using `status`."
+                      }
+                    }
+                  },
+                  "icon": {
+                    "type": "object",
+                    "description": "The database's icon: an emoji object `{\"type\": \"emoji\", \"emoji\": \"<one emoji character>\"}` or an external file object `{\"type\": \"external\", \"external\": {\"url\": \"https://...\"}}`.",
+                    "additionalProperties": true
+                  },
+                  "cover": {
+                    "type": "object",
+                    "description": "The database's cover image as an external file object `{\"type\": \"external\", \"external\": {\"url\": \"https://...\"}}`.",
+                    "additionalProperties": true
+                  },
+                  "is_inline": {
+                    "type": "boolean",
+                    "description": "`true` renders the database inline in the parent page instead of as its own full page."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/databaseObjectResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "example": 400
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "deprecated": false,
+        "security": []
+      }
+    },
     "/v1/databases/{database_id}": {
       "get": {
         "summary": "Retrieve a database",
@@ -4191,6 +4311,120 @@
             "$ref": "#/components/parameters/notionVersion"
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/databaseObjectResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "example": 400
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "deprecated": false,
+        "security": []
+      },
+      "patch": {
+        "summary": "Update a database",
+        "description": "Updates a database's own attributes - title, description, icon, cover, inline rendering, lock state, and its parent (moving it under a different page). The COLUMNS are not here: they live on the data source, so a schema change goes through API-update-a-data-source with an id from `data_sources`. Every field is optional; only what is sent is changed.",
+        "operationId": "update-a-database",
+        "tags": [
+          "Databases"
+        ],
+        "parameters": [
+          {
+            "name": "database_id",
+            "in": "path",
+            "description": "Identifier for a Notion database",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "$ref": "#/components/parameters/notionVersion"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "array",
+                    "description": "The new title as rich text runs. Replaces the old title entirely.",
+                    "items": {
+                      "$ref": "#/components/schemas/richTextRequest"
+                    },
+                    "maxItems": 100
+                  },
+                  "description": {
+                    "type": "array",
+                    "description": "The database's description as rich text runs, shown under the title.",
+                    "items": {
+                      "$ref": "#/components/schemas/richTextRequest"
+                    },
+                    "maxItems": 100
+                  },
+                  "parent": {
+                    "$ref": "#/components/schemas/pageIdParentRequest"
+                  },
+                  "icon": {
+                    "type": "object",
+                    "description": "An emoji object `{\"type\": \"emoji\", \"emoji\": \"<one emoji character>\"}` or an external file object. Send `null` to remove the icon.",
+                    "additionalProperties": true
+                  },
+                  "cover": {
+                    "type": "object",
+                    "description": "An external file object `{\"type\": \"external\", \"external\": {\"url\": \"https://...\"}}`. Send `null` to remove the cover.",
+                    "additionalProperties": true
+                  },
+                  "is_inline": {
+                    "type": "boolean",
+                    "description": "`true` renders the database inline in its parent page, `false` gives it its own full page."
+                  },
+                  "is_locked": {
+                    "type": "boolean",
+                    "description": "`true` locks the database so its layout and schema cannot be edited in the UI."
+                  },
+                  "in_trash": {
+                    "type": "boolean",
+                    "description": "`true` moves the database to the trash, `false` restores it."
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful response",
