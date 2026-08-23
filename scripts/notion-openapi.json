@@ -2959,14 +2959,45 @@
                     "description": "The whole page body as Notion-flavoured Markdown, written while the page is created — no follow-up append call. Mutually exclusive with `children`."
                   },
                   "icon": {
-                    "type": "string",
-                    "description": "The icon of the new page. Either an [emoji object](https://developers.notion.com/reference/emoji-object) or an [external file object](https://developers.notion.com/reference/file-object)..",
-                    "format": "json"
+                    "description": "A page icon for the page. Supported types are [external file object](https://developers.notion.com/reference/file-object) or [emoji object](https://developers.notion.com/reference/emoji-object).",
+                    "type": "object",
+                    "properties": {
+                      "emoji": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "emoji"
+                    ]
                   },
                   "cover": {
-                    "type": "string",
-                    "description": "The cover image of the new page, represented as a [file object](https://developers.notion.com/reference/file-object).",
-                    "format": "json"
+                    "type": "object",
+                    "description": "A cover image for the page. Only [external file objects](https://developers.notion.com/reference/file-object) are supported.",
+                    "properties": {
+                      "external": {
+                        "type": "object",
+                        "properties": {
+                          "url": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "required": [
+                          "url"
+                        ]
+                      },
+                      "type": {
+                        "enum": [
+                          "external"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "external"
+                    ],
+                    "additionalProperties": false
                   }
                 }
               }
